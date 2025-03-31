@@ -9,7 +9,6 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Проверка: если не заданы переменные — останавливаем запуск
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise Exception("❌ TELEGRAM_TOKEN и TELEGRAM_CHAT_ID должны быть заданы в переменных окружения")
 
@@ -23,7 +22,6 @@ if not BINANCE_API_KEY or not BINANCE_API_SECRET:
 # Инициализируем Binance API-клиент
 binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_API_SECRET)
 
-# Пробуем выполнить ping для проверки подключения к Binance
 try:
     binance_client.ping()
     print("✅ Подключение к Binance успешно")
@@ -59,7 +57,22 @@ def webhook():
 
     signal = data["signal"]
     print(f"📥 Получен сигнал: {signal}")
-    send_telegram_message(f"📡 Эй! Получен сигнал: *{signal.upper()}*")
+
+    # Запрос баланса фьючерсного аккаунта
+    try:
+        futures_balance = binance_client.futures_account_balance()
+        usdt_balance = None
+        for asset in futures_balance:
+            if asset.get("asset") == "USDT":
+                usdt_balance = asset.get("balance")
+                break
+        print(f"📊 Futures баланс: USDT {usdt_balance}")
+    except Exception as e:
+        print(f"❌ Ошибка получения баланса: {e}")
+        usdt_balance = "не удалось получить баланс"
+
+    # Отправляем сообщение в Telegram с сигналом и балансом
+    send_telegram_message(f"📡 Эй! Получен сигнал: *{signal.upper()}*\nFutures баланс: USDT {usdt_balance}")
 
     return {"status": "ok", "signal": signal}
 
