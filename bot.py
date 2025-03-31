@@ -45,7 +45,6 @@ def send_telegram_message(text):
 def get_position(symbol):
     try:
         info = binance_client.futures_position_information(symbol=symbol)
-        # Binance возвращает позицию даже если она равна 0, поэтому берем ее и смотрим позицию
         pos = next((p for p in info if p["symbol"] == symbol), None)
         print(f"DEBUG: get_position для {symbol}: {pos}")
         return pos
@@ -78,12 +77,21 @@ def webhook():
 
     # Проверяем, есть ли уже открытая позиция по этому символу
     pos = get_position(symbol_fixed)
-    if pos is None:
-        print("❌ Не удалось получить данные о позиции")
-    elif abs(float(pos.get("positionAmt", 0))) > 0:
+    if pos and abs(float(pos.get("positionAmt", 0))) > 0:
         print(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal} игнорируется.")
         send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         return {"status": "skipped", "message": "Position already open."}
+
+    # Получаем количество из запроса (если передано), иначе используем значение по умолчанию
+    quantity = float(data.get("quantity", 0.01))
+    # Получаем текущую цену для расчёта notional
+    ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
+    last_price = float(ticker["price"])
+    min_notional = 20.0  # минимально допустимое notional (в USDT)
+    min_qty_required = min_notional / last_price
+    if quantity < min_qty_required:
+        print(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
+        quantity = min_qty_required
 
     # Устанавливаем плечо 1 для указанного символа
     try:
@@ -93,16 +101,16 @@ def webhook():
         print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error setting leverage: {e}"}
 
-    # Определяем сторону сделки: если сигнал "long", то BUY, иначе SELL
+    # Определяем сторону сделки: если сигнал "long" – ордер BUY, иначе SELL
     side = "BUY" if signal == "long" else "SELL"
 
-    # Открываем рыночный ордер на 0.01
+    # Открываем рыночный ордер с рассчитанным количеством
     try:
         order = binance_client.futures_create_order(
             symbol=symbol_fixed,
             side=side,
             type="MARKET",
-            quantity=0.01
+            quantity=quantity
         )
         print(f"✅ Ордер создан: {order}")
     except Exception as e:
@@ -142,7 +150,7 @@ def webhook():
         f"🚀 Сделка открыта!\n"
         f"Символ: {symbol_fixed}\n"
         f"Направление: {signal.upper()}\n"
-        f"Количество: 0.01\n"
+        f"Количество: {quantity}\n"
         f"Цена входа: {entry_price}\n"
         f"Плечо: 1\n"
         f"Использованная маржа: {used_margin}\n"
