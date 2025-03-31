@@ -12,6 +12,9 @@ app = Flask(__name__)
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Глобальная переменная для управления торговлей
+trading_enabled = True
+
 # Получаем токен и chat_id для Telegram из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -33,8 +36,7 @@ except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
 # Глобальный словарь для хранения данных открытых позиций по символам
-# Для каждого символа храним: entry_price, quantity, leverage, commission_entry, break_even_price
-positions_entry_data = {}
+positions_entry_data = {}  # ключ: символ, значение: dict с данными (entry_price, quantity, leverage, commission_entry, break_even_price)
 
 # Функция отправки сообщения в Telegram
 def send_telegram_message(text):
@@ -65,26 +67,17 @@ def get_position(symbol):
 # --------------------------
 # Обработка закрытия позиции через Binance User Data Stream
 def handle_user_data(msg):
-    # Фильтруем только события ORDER_TRADE_UPDATE
     if msg.get('e') != 'ORDER_TRADE_UPDATE':
         return
     order = msg.get('o', {})
     symbol = order.get('s', '')
-    # Если для этого символа нет сохранённых данных об открытии, выходим
     if symbol not in positions_entry_data:
         return
-    # Определяем, что это событие закрытия позиции:
-    # Обычно для закрытия позиции статус "FILLED" и ps == "BOTH"
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Цена выхода: используем avgPrice или fallback ap
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
-        # Количество закрытой позиции
         quantity = float(order.get('q', 0))
-        # Realized PnL (если доступен)
         pnl = float(order.get('rp', 0))
-        # Комиссия закрытия
         commission_exit = float(order.get('commission', 0))
-        # Извлекаем данные об открытии
         entry_data = positions_entry_data.pop(symbol, {})
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
@@ -92,13 +85,9 @@ def handle_user_data(msg):
         break_even_price = entry_data.get("break_even_price", 0)
         total_commission = commission_entry + commission_exit
         net_pnl = pnl - total_commission
-        # Рассчитываем чистую цену безубыточности (break-even + суммарные комиссии)
         net_break_even = break_even_price + total_commission
-        # Определяем направление закрытия: если закрывающий ордер SELL, значит позиция LONG, иначе SHORT
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
-        # Результативность сделки: зеленый, если чистый PnL положительный, иначе красный
         result_indicator = "🟩" if net_pnl > 0 else "🟥"
-        # Формируем сообщение
         message = (
             f"{result_indicator} Сделка закрыта!\n"
             f"Символ: {symbol}\n"
@@ -122,11 +111,9 @@ def handle_user_data(msg):
 def start_userdata_stream():
     twm = ThreadedWebsocketManager(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
     twm.start()
-    # Подписываемся на фьючерсный пользовательский поток
     twm.start_futures_user_socket(callback=handle_user_data)
     logging.info("📡 Binance User Data Stream запущен для отслеживания закрытия позиций.")
 
-    # Поддержка listenKey (keep-alive) – в отдельном потоке
     def keep_alive():
         while True:
             time.sleep(30 * 60)
@@ -137,9 +124,47 @@ def start_userdata_stream():
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
+# Функция опроса Telegram для управления ботом (команды /pause и /resume)
+def poll_telegram_commands():
+    global trading_enabled
+    offset = None
+    while True:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        params = {}
+        if offset:
+            params["offset"] = offset
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            data = response.json()
+            if data.get("ok") and data.get("result"):
+                for update in data["result"]:
+                    offset = update["update_id"] + 1
+                    message = update.get("message")
+                    if not message:
+                        continue
+                    text = message.get("text", "").strip().lower()
+                    # Обработка команд
+                    if text == "/pause":
+                        trading_enabled = False
+                        send_telegram_message("🚫 Бот приостановлен. Сигналы с TradingView игнорируются.")
+                        logging.info("Получена команда /pause. Торговля отключена.")
+                    elif text == "/resume":
+                        trading_enabled = True
+                        send_telegram_message("✅ Бот возобновил работу. Сигналы с TradingView принимаются.")
+                        logging.info("Получена команда /resume. Торговля включена.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка при опросе Telegram: {e}")
+        time.sleep(2)
+
+# --------------------------
 # Вебхук для открытия позиции
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    global trading_enabled
+    if not trading_enabled:
+        logging.info("⚠️ Торговля отключена. Сигналы игнорируются.")
+        return {"status": "skipped", "message": "Trading is disabled."}, 200
+
     data = request.get_json()
     logging.debug(f"DEBUG: Получен JSON: {data}")
     if not data or "signal" not in data:
@@ -158,14 +183,12 @@ def webhook():
     logging.info(f"📥 Символ: {symbol_received} -> {symbol_fixed}")
     logging.info(f"📥 Leverage: {leverage}, Quantity: {quantity}")
 
-    # Проверяем, есть ли уже открытая позиция по этому символу
     pos = get_position(symbol_fixed)
     if pos and abs(float(pos.get("positionAmt", 0))) > 0:
         logging.info(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         return {"status": "skipped", "message": "Position already open."}
 
-    # Устанавливаем плечо для указанного символа
     try:
         leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=leverage)
         logging.info(f"✅ Установлено плечо {leverage} для {symbol_fixed}: {leverage_resp}")
@@ -173,19 +196,16 @@ def webhook():
         logging.error(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error setting leverage: {e}"}
 
-    # Получаем текущую цену для расчёта notional
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
-    min_notional = 20.0  # Минимально допустимый notional (USDT)
+    min_notional = 20.0
     min_qty_required = min_notional / last_price
     if quantity < min_qty_required:
         logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
         quantity = min_qty_required
 
-    # Определяем сторону сделки: если сигнал "long" – ордер BUY, иначе SELL
     side = "BUY" if signal == "long" else "SELL"
 
-    # Открываем рыночный ордер
     try:
         order = binance_client.futures_create_order(
             symbol=symbol_fixed,
@@ -198,7 +218,6 @@ def webhook():
         logging.error(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error creating order: {e}"}
 
-    # Ждем немного для обновления информации о позиции
     time.sleep(0.5)
     pos = get_position(symbol_fixed)
     if not pos:
@@ -214,7 +233,6 @@ def webhook():
         logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
         entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
 
-    # Получаем комиссию по ордеру входа (ищем последний трейд с совпадающим orderId)
     commission_entry = 0.0
     try:
         trades = binance_client.futures_account_trades(symbol=symbol_fixed)
@@ -241,7 +259,6 @@ def webhook():
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
     logging.info(open_message)
 
-    # Сохраняем данные об открытой позиции для последующего закрытия
     positions_entry_data[symbol_fixed] = {
         "entry_price": entry_price,
         "quantity": quantity,
@@ -253,6 +270,9 @@ def webhook():
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
 if __name__ == "__main__":
+    # Запускаем поток опроса Telegram команд (/pause и /resume)
+    threading.Thread(target=poll_telegram_commands, daemon=True).start()
+    # Запускаем поток Binance User Data Stream для отслеживания закрытия позиций
     threading.Thread(target=start_userdata_stream, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
