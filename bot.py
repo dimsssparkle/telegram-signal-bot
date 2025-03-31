@@ -83,7 +83,7 @@ def webhook():
         return {"status": "skipped", "message": "Position already open."}
 
     # Получаем количество из запроса (если передано), иначе используем значение по умолчанию
-    quantity = float(data.get("quantity", 0.01))
+    quantity = float(data.get("quantity", 0.011))
     # Получаем текущую цену для расчёта notional
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
@@ -95,7 +95,7 @@ def webhook():
 
     # Устанавливаем плечо 1 для указанного символа
     try:
-        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=1)
+        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=2)
         print(f"✅ Установлено плечо 1 для {symbol_fixed}: {leverage_resp}")
     except Exception as e:
         print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
