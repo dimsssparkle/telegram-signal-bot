@@ -66,14 +66,18 @@ def webhook():
         print("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
 
+    # Извлекаем сигнал и символ из запроса
     signal = data["signal"].lower()
-    # Получаем символ из TradingView, например "ETHUSDT.P"
     symbol_received = data.get("symbol", "N/A")
-    # Преобразуем: оставляем только часть до точки
     symbol_fixed = symbol_received.split('.')[0]
 
+    # Извлекаем динамические параметры: leverage и quantity
+    leverage = int(data.get("leverage", 10))
+    quantity = float(data.get("quantity", 0.011))
+
     print(f"📥 Получен сигнал: {signal}")
-    print(f"📥 Получен символ: {symbol_received} -> Преобразованный: {symbol_fixed}")
+    print(f"📥 Получен символ: {symbol_received} -> {symbol_fixed}")
+    print(f"📥 Leverage: {leverage}, Quantity: {quantity}")
 
     # Проверяем, есть ли уже открытая позиция по этому символу
     pos = get_position(symbol_fixed)
@@ -82,24 +86,22 @@ def webhook():
         send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         return {"status": "skipped", "message": "Position already open."}
 
-    # Получаем количество из запроса (если передано), иначе используем значение по умолчанию
-    quantity = float(data.get("quantity", 0.011))
+    # Устанавливаем плечо для указанного символа
+    try:
+        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=leverage)
+        print(f"✅ Установлено плечо {leverage} для {symbol_fixed}: {leverage_resp}")
+    except Exception as e:
+        print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
+        return {"status": "error", "message": f"Error setting leverage: {e}"}
+
     # Получаем текущую цену для расчёта notional
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
-    min_notional = 20.0  # минимально допустимое notional (в USDT)
+    min_notional = 20.0  # Минимально допустимый notional (в USDT)
     min_qty_required = min_notional / last_price
     if quantity < min_qty_required:
         print(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
         quantity = min_qty_required
-
-    # Устанавливаем плечо 1 для указанного символа
-    try:
-        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=2)
-        print(f"✅ Установлено плечо 1 для {symbol_fixed}: {leverage_resp}")
-    except Exception as e:
-        print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
-        return {"status": "error", "message": f"Error setting leverage: {e}"}
 
     # Определяем сторону сделки: если сигнал "long" – ордер BUY, иначе SELL
     side = "BUY" if signal == "long" else "SELL"
@@ -119,8 +121,6 @@ def webhook():
 
     # Ждем немного, чтобы данные о позиции обновились
     time.sleep(0.5)
-
-    # Получаем обновленную позицию
     pos = get_position(symbol_fixed)
     if not pos:
         print("❌ Не удалось получить информацию о позиции после ордера")
@@ -145,14 +145,14 @@ def webhook():
     except Exception as e:
         print(f"❌ Ошибка получения комиссии: {e}")
 
-    # Формируем сообщение для Telegram
+    # Формируем сообщение для Telegram с фактическими данными
     message = (
         f"🚀 Сделка открыта!\n"
         f"Символ: {symbol_fixed}\n"
         f"Направление: {signal.upper()}\n"
         f"Количество: {quantity}\n"
         f"Цена входа: {entry_price}\n"
-        f"Плечо: 1\n"
+        f"Плечо: {leverage}\n"
         f"Использованная маржа: {used_margin}\n"
         f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {commission}"
