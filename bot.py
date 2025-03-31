@@ -45,8 +45,9 @@ def send_telegram_message(text):
 def get_position(symbol):
     try:
         info = binance_client.futures_position_information(symbol=symbol)
-        # Находим позицию для данного символа
+        # Binance возвращает позицию даже если она равна 0, поэтому берем ее и смотрим позицию
         pos = next((p for p in info if p["symbol"] == symbol), None)
+        print(f"DEBUG: get_position для {symbol}: {pos}")
         return pos
     except Exception as e:
         print(f"❌ Ошибка получения позиции для {symbol}: {e}")
@@ -61,13 +62,15 @@ def index():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
+    print("DEBUG: Получен JSON:", data)
     if not data or "signal" not in data:
+        print("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
 
     signal = data["signal"].lower()
     # Получаем символ из TradingView, например "ETHUSDT.P"
     symbol_received = data.get("symbol", "N/A")
-    # Преобразуем: оставляем только часть до точки, если точка присутствует
+    # Преобразуем: оставляем только часть до точки
     symbol_fixed = symbol_received.split('.')[0]
 
     print(f"📥 Получен сигнал: {signal}")
@@ -75,15 +78,17 @@ def webhook():
 
     # Проверяем, есть ли уже открытая позиция по этому символу
     pos = get_position(symbol_fixed)
-    if pos and abs(float(pos.get("positionAmt", 0))) > 0:
+    if pos is None:
+        print("❌ Не удалось получить данные о позиции")
+    elif abs(float(pos.get("positionAmt", 0))) > 0:
         print(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal} игнорируется.")
         send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         return {"status": "skipped", "message": "Position already open."}
 
     # Устанавливаем плечо 1 для указанного символа
     try:
-        binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=1)
-        print(f"✅ Установлено плечо 1 для {symbol_fixed}")
+        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=1)
+        print(f"✅ Установлено плечо 1 для {symbol_fixed}: {leverage_resp}")
     except Exception as e:
         print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error setting leverage: {e}"}
@@ -99,20 +104,20 @@ def webhook():
             type="MARKET",
             quantity=0.01
         )
-        print(f"✅ Ордер на открытие позиции создан: {order}")
+        print(f"✅ Ордер создан: {order}")
     except Exception as e:
         print(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error creating order: {e}"}
 
-    # Ждём немного для обновления информации о позиции
+    # Ждем немного, чтобы данные о позиции обновились
     time.sleep(0.5)
 
     # Получаем обновленную позицию
     pos = get_position(symbol_fixed)
     if not pos:
+        print("❌ Не удалось получить информацию о позиции после ордера")
         return {"status": "error", "message": "Не удалось получить информацию о позиции"}
 
-    # Извлекаем необходимые данные
     try:
         entry_price = float(pos.get("entryPrice", 0))
         used_margin = float(pos.get("initialMargin", 0))
@@ -121,7 +126,7 @@ def webhook():
         print(f"❌ Ошибка извлечения данных позиции: {e}")
         entry_price, used_margin, liq_price = 0, 0, 0
 
-    # Получаем комиссию по ордеру входа, ищем последний трейд с совпадающим orderId
+    # Получаем комиссию по ордеру входа
     commission = 0.0
     try:
         trades = binance_client.futures_account_trades(symbol=symbol_fixed)
@@ -145,6 +150,7 @@ def webhook():
         f"Комиссия входа: {commission}"
     )
     send_telegram_message(message)
+    print("DEBUG: Telegram сообщение отправлено:")
     print(message)
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
