@@ -41,7 +41,7 @@ def webhook():
 
     signal = data["signal"]
     print(f"📥 Получен сигнал: {signal}")
-    send_telegram_message(f"📡 Получен сигнал: *{signal.upper()}*")
+    send_telegram_message(f"📡 Эй! Получен сигнал: *{signal.upper()}*")
 
     return {"status": "ok", "signal": signal}
 
