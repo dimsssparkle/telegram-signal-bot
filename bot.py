@@ -1,6 +1,7 @@
 from flask import Flask, request
 import os
 import requests
+import time
 from binance.client import Client as BinanceClient
 
 app = Flask(__name__)
@@ -17,7 +18,7 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 if not BINANCE_API_KEY or not BINANCE_API_SECRET:
     raise Exception("❌ BINANCE_API_KEY и BINANCE_API_SECRET должны быть заданы в переменных окружения")
 
-# Инициализируем Binance API-клиент
+# Инициализируем Binance API-клиента
 binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_API_SECRET)
 try:
     binance_client.ping()
@@ -40,47 +41,111 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ Ошибка отправки в Telegram: {e}")
 
+# Функция для получения позиции по символу (на фьючерсном аккаунте)
+def get_position(symbol):
+    try:
+        info = binance_client.futures_position_information(symbol=symbol)
+        # Находим позицию для данного символа
+        pos = next((p for p in info if p["symbol"] == symbol), None)
+        return pos
+    except Exception as e:
+        print(f"❌ Ошибка получения позиции для {symbol}: {e}")
+        return None
+
 # Корневая страница для проверки работоспособности
 @app.route("/")
 def index():
     return "🚀 Бот работает!"
 
-# Webhook для приёма сигналов от TradingView
+# Webhook для приёма сигналов от TradingView и открытия позиции на Binance
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
     if not data or "signal" not in data:
         return {"status": "error", "message": "No signal provided"}, 400
 
-    signal = data["signal"]
-    # Получаем символ из TradingView (например, "ETHUSDT.P")
+    signal = data["signal"].lower()
+    # Получаем символ из TradingView, например "ETHUSDT.P"
     symbol_received = data.get("symbol", "N/A")
-    # Преобразуем в формат Binance: оставляем часть до первой точки
+    # Преобразуем: оставляем только часть до точки, если точка присутствует
     symbol_fixed = symbol_received.split('.')[0]
 
     print(f"📥 Получен сигнал: {signal}")
     print(f"📥 Получен символ: {symbol_received} -> Преобразованный: {symbol_fixed}")
 
-    # Запрос баланса фьючерсного аккаунта Binance
+    # Проверяем, есть ли уже открытая позиция по этому символу
+    pos = get_position(symbol_fixed)
+    if pos and abs(float(pos.get("positionAmt", 0))) > 0:
+        print(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal} игнорируется.")
+        send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
+        return {"status": "skipped", "message": "Position already open."}
+
+    # Устанавливаем плечо 1 для указанного символа
     try:
-        futures_balance = binance_client.futures_account_balance()
-        usdt_balance = None
-        for asset in futures_balance:
-            if asset.get("asset") == "USDT":
-                usdt_balance = asset.get("balance")
-                break
-        print(f"📊 Futures баланс: USDT {usdt_balance}")
+        binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=1)
+        print(f"✅ Установлено плечо 1 для {symbol_fixed}")
     except Exception as e:
-        print(f"❌ Ошибка получения баланса: {e}")
-        usdt_balance = "не удалось получить баланс"
+        print(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
+        return {"status": "error", "message": f"Error setting leverage: {e}"}
 
-    # Здесь можно добавить логику открытия сделки на Binance по symbol_fixed и signal
-    # Например: open_trade(symbol_fixed, signal)
+    # Определяем сторону сделки: если сигнал "long", то BUY, иначе SELL
+    side = "BUY" if signal == "long" else "SELL"
 
-    # Отправляем сообщение в Telegram с данными сигнала, отформатированным символом и балансом
-    send_telegram_message(
-        f"📡 Эй! Получен сигнал: *{signal.upper()}*\nСимвол: *{symbol_fixed}*\nFutures баланс: USDT {usdt_balance}"
+    # Открываем рыночный ордер на 0.01
+    try:
+        order = binance_client.futures_create_order(
+            symbol=symbol_fixed,
+            side=side,
+            type="MARKET",
+            quantity=0.01
+        )
+        print(f"✅ Ордер на открытие позиции создан: {order}")
+    except Exception as e:
+        print(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
+        return {"status": "error", "message": f"Error creating order: {e}"}
+
+    # Ждём немного для обновления информации о позиции
+    time.sleep(0.5)
+
+    # Получаем обновленную позицию
+    pos = get_position(symbol_fixed)
+    if not pos:
+        return {"status": "error", "message": "Не удалось получить информацию о позиции"}
+
+    # Извлекаем необходимые данные
+    try:
+        entry_price = float(pos.get("entryPrice", 0))
+        used_margin = float(pos.get("initialMargin", 0))
+        liq_price = float(pos.get("liquidationPrice", 0))
+    except Exception as e:
+        print(f"❌ Ошибка извлечения данных позиции: {e}")
+        entry_price, used_margin, liq_price = 0, 0, 0
+
+    # Получаем комиссию по ордеру входа, ищем последний трейд с совпадающим orderId
+    commission = 0.0
+    try:
+        trades = binance_client.futures_account_trades(symbol=symbol_fixed)
+        for trade in reversed(trades):
+            if trade.get("orderId") == order.get("orderId"):
+                commission = float(trade.get("commission", 0))
+                break
+    except Exception as e:
+        print(f"❌ Ошибка получения комиссии: {e}")
+
+    # Формируем сообщение для Telegram
+    message = (
+        f"🚀 Сделка открыта!\n"
+        f"Символ: {symbol_fixed}\n"
+        f"Направление: {signal.upper()}\n"
+        f"Количество: 0.01\n"
+        f"Цена входа: {entry_price}\n"
+        f"Плечо: 1\n"
+        f"Использованная маржа: {used_margin}\n"
+        f"Цена ликвидации: {liq_price}\n"
+        f"Комиссия входа: {commission}"
     )
+    send_telegram_message(message)
+    print(message)
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
