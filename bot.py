@@ -12,7 +12,7 @@ app = Flask(__name__)
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Глобальная переменная для управления торговлей
+# Глобальная переменная для управления торговлей (если False – сигналы игнорируются)
 trading_enabled = True
 
 # Получаем токен и chat_id для Telegram из переменных окружения
@@ -36,7 +36,8 @@ except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
 # Глобальный словарь для хранения данных открытых позиций по символам
-positions_entry_data = {}  # ключ: символ, значение: dict с данными (entry_price, quantity, leverage, commission_entry, break_even_price)
+# Для каждого символа сохраняются данные: entry_price, quantity, leverage, commission_entry, break_even_price
+positions_entry_data = {}
 
 # Функция отправки сообщения в Telegram
 def send_telegram_message(text):
@@ -63,6 +64,38 @@ def get_position(symbol):
     except Exception as e:
         logging.error(f"❌ Ошибка получения позиции для {symbol}: {e}")
         return None
+
+# --------------------------
+# Функция закрытия всех открытых позиций с использованием closePosition=True
+def close_all_positions():
+    logging.info("Начинается закрытие всех открытых позиций.")
+    try:
+        positions = binance_client.futures_position_information()
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения позиций: {e}")
+        return
+
+    closed_symbols = []
+    for pos in positions:
+        amt = float(pos.get("positionAmt", 0))
+        if abs(amt) > 0:
+            symbol = pos.get("symbol")
+            # Отправляем ордер с closePosition=True для закрытия всей позиции
+            try:
+                order = binance_client.futures_create_order(
+                    symbol=symbol,
+                    side="SELL" if amt > 0 else "BUY",
+                    type="MARKET",
+                    closePosition=True
+                )
+                logging.info(f"✅ Позиция {symbol} закрыта через closePosition: {order}")
+                closed_symbols.append(symbol)
+            except Exception as e:
+                logging.error(f"❌ Ошибка закрытия позиции для {symbol}: {e}")
+    if closed_symbols:
+        send_telegram_message(f"🚫 Закрыты позиции по: {', '.join(closed_symbols)}")
+    else:
+        send_telegram_message("ℹ️ Нет открытых позиций для закрытия.")
 
 # --------------------------
 # Обработка закрытия позиции через Binance User Data Stream
@@ -124,7 +157,7 @@ def start_userdata_stream():
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
-# Функция опроса Telegram для управления ботом (команды /pause и /resume)
+# Функция опроса Telegram для управления ботом (команды /pause, /resume, /close_orders, /close_orders_pause_trading)
 def poll_telegram_commands():
     global trading_enabled
     offset = None
@@ -143,7 +176,6 @@ def poll_telegram_commands():
                     if not message:
                         continue
                     text = message.get("text", "").strip().lower()
-                    # Обработка команд
                     if text == "/pause":
                         trading_enabled = False
                         send_telegram_message("🚫 Бот приостановлен. Сигналы с TradingView игнорируются.")
@@ -152,6 +184,13 @@ def poll_telegram_commands():
                         trading_enabled = True
                         send_telegram_message("✅ Бот возобновил работу. Сигналы с TradingView принимаются.")
                         logging.info("Получена команда /resume. Торговля включена.")
+                    elif text == "/close_orders":
+                        close_all_positions()
+                    elif text == "/close_orders_pause_trading":
+                        close_all_positions()
+                        trading_enabled = False
+                        send_telegram_message("🚫 Все позиции закрыты и торговля приостановлена.")
+                        logging.info("Получена команда /close_orders_pause_trading. Позиции закрыты, торговля отключена.")
         except Exception as e:
             logging.error(f"❌ Ошибка при опросе Telegram: {e}")
         time.sleep(2)
@@ -270,7 +309,7 @@ def webhook():
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
 if __name__ == "__main__":
-    # Запускаем поток опроса Telegram команд (/pause и /resume)
+    # Запускаем поток опроса Telegram команд (/pause, /resume, /close_orders, /close_orders_pause_trading)
     threading.Thread(target=poll_telegram_commands, daemon=True).start()
     # Запускаем поток Binance User Data Stream для отслеживания закрытия позиций
     threading.Thread(target=start_userdata_stream, daemon=True).start()
