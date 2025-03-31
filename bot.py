@@ -13,7 +13,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Глобальная переменная для управления торговлей (если False – сигналы игнорируются)
-trading_enabled = True
+trading_enabled = False
 
 # Получаем токен и chat_id для Telegram из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -66,7 +66,7 @@ def get_position(symbol):
         return None
 
 # --------------------------
-# Функция закрытия всех открытых позиций с использованием closePosition=True
+# Функция закрытия всех открытых позиций с использованием reduceOnly=True
 def close_all_positions():
     logging.info("Начинается закрытие всех открытых позиций.")
     try:
@@ -80,15 +80,15 @@ def close_all_positions():
         amt = float(pos.get("positionAmt", 0))
         if abs(amt) > 0:
             symbol = pos.get("symbol")
-            # Отправляем ордер с closePosition=True для закрытия всей позиции
             try:
                 order = binance_client.futures_create_order(
                     symbol=symbol,
                     side="SELL" if amt > 0 else "BUY",
                     type="MARKET",
-                    closePosition=True
+                    quantity=abs(amt),
+                    reduceOnly=True
                 )
-                logging.info(f"✅ Позиция {symbol} закрыта через closePosition: {order}")
+                logging.info(f"✅ Позиция {symbol} закрыта: {order}")
                 closed_symbols.append(symbol)
             except Exception as e:
                 logging.error(f"❌ Ошибка закрытия позиции для {symbol}: {e}")
