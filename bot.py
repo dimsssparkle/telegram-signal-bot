@@ -19,7 +19,7 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 if not BINANCE_API_KEY or not BINANCE_API_SECRET:
     raise Exception("❌ BINANCE_API_KEY и BINANCE_API_SECRET должны быть заданы в переменных окружения")
 
-# Инициализируем Binance API-клиент
+# Инициализируем Binance API-клиента
 binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_API_SECRET)
 
 try:
@@ -48,7 +48,7 @@ def send_telegram_message(text):
 def index():
     return "🚀 Бот работает!"
 
-# Webhook — приём сигналов
+# Webhook — приём сигналов с TradingView
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -56,7 +56,11 @@ def webhook():
         return {"status": "error", "message": "No signal provided"}, 400
 
     signal = data["signal"]
+    # Принимаем дополнительный параметр "symbol" (если передан)
+    symbol_from_view = data.get("symbol", "N/A")
+    
     print(f"📥 Получен сигнал: {signal}")
+    print(f"📥 Получен символ: {symbol_from_view}")
 
     # Запрос баланса фьючерсного аккаунта
     try:
@@ -71,10 +75,12 @@ def webhook():
         print(f"❌ Ошибка получения баланса: {e}")
         usdt_balance = "не удалось получить баланс"
 
-    # Отправляем сообщение в Telegram с сигналом и балансом
-    send_telegram_message(f"📡 Эй! Получен сигнал: *{signal.upper()}*\nFutures баланс: USDT {usdt_balance}")
+    # Отправляем сообщение в Telegram с сигналом, символом и балансом
+    send_telegram_message(
+        f"📡 Эй! Получен сигнал: *{signal.upper()}*\nСимвол: *{symbol_from_view}*\nFutures баланс: USDT {usdt_balance}"
+    )
 
-    return {"status": "ok", "signal": signal}
+    return {"status": "ok", "signal": signal, "symbol": symbol_from_view}
 
 # Запуск Flask-приложения
 if __name__ == "__main__":
