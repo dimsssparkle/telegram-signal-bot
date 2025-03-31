@@ -33,7 +33,8 @@ except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
 # Глобальный словарь для хранения данных открытых позиций по символам
-positions_entry_data = {}  # ключ: символ, значение: dict с данными (entry_price, quantity, leverage, commission_entry)
+# Для каждого символа храним: entry_price, quantity, leverage, commission_entry, break_even_price
+positions_entry_data = {}
 
 # Функция отправки сообщения в Telegram
 def send_telegram_message(text):
@@ -73,9 +74,9 @@ def handle_user_data(msg):
     if symbol not in positions_entry_data:
         return
     # Определяем, что это событие закрытия позиции:
-    # Обычно для закрытия позиции status "FILLED" и ps == "BOTH"
+    # Обычно для закрытия позиции статус "FILLED" и ps == "BOTH"
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # exit_price: используем среднюю цену закрытия (avgPrice) или fallback ap
+        # Цена выхода: используем avgPrice или fallback ap
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         # Количество закрытой позиции
         quantity = float(order.get('q', 0))
@@ -88,13 +89,18 @@ def handle_user_data(msg):
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
         commission_entry = entry_data.get("commission_entry", 0)
+        break_even_price = entry_data.get("break_even_price", 0)
         total_commission = commission_entry + commission_exit
         net_pnl = pnl - total_commission
+        # Рассчитываем чистую цену безубыточности (break-even + суммарные комиссии)
+        net_break_even = break_even_price + total_commission
         # Определяем направление закрытия: если закрывающий ордер SELL, значит позиция LONG, иначе SHORT
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
+        # Результативность сделки: зеленый, если чистый PnL положительный, иначе красный
+        result_indicator = "🟩" if net_pnl > 0 else "🟥"
         # Формируем сообщение
         message = (
-            f"🚀 Сделка закрыта!\n"
+            f"{result_indicator} Сделка закрыта!\n"
             f"Символ: {symbol}\n"
             f"Направление: {direction}\n"
             f"Количество: {quantity}\n"
@@ -104,6 +110,8 @@ def handle_user_data(msg):
             f"Сумма комиссий: {total_commission}\n"
             f"PnL: {pnl}\n"
             f"Чистый PnL: {net_pnl}\n"
+            f"Цена безубыточности: {break_even_price}\n"
+            f"Чистая цена безубыточности: {net_break_even}\n"
             f"Метод закрытия: MANUAL"
         )
         send_telegram_message(message)
@@ -201,9 +209,10 @@ def webhook():
         entry_price = float(pos.get("entryPrice", 0))
         used_margin = float(pos.get("initialMargin", 0))
         liq_price = float(pos.get("liquidationPrice", 0))
+        break_even_price = float(pos.get("breakEvenPrice", 0))
     except Exception as e:
         logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
-        entry_price, used_margin, liq_price = 0, 0, 0
+        entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
 
     # Получаем комиссию по ордеру входа (ищем последний трейд с совпадающим orderId)
     commission_entry = 0.0
@@ -216,7 +225,6 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
-    # Формируем сообщение для Telegram об открытии сделки
     open_message = (
         f"🚀 Сделка открыта!\n"
         f"Символ: {symbol_fixed}\n"
@@ -226,7 +234,8 @@ def webhook():
         f"Плечо: {leverage}\n"
         f"Использованная маржа: {used_margin}\n"
         f"Цена ликвидации: {liq_price}\n"
-        f"Комиссия входа: {commission_entry}"
+        f"Комиссия входа: {commission_entry}\n"
+        f"Цена безубыточности: {break_even_price}"
     )
     send_telegram_message(open_message)
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
@@ -238,12 +247,12 @@ def webhook():
         "quantity": quantity,
         "leverage": leverage,
         "commission_entry": commission_entry,
+        "break_even_price": break_even_price
     }
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
 if __name__ == "__main__":
-    # Запускаем поток Binance User Data Stream для отслеживания закрытия позиций
     threading.Thread(target=start_userdata_stream, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
