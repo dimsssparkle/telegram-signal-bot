@@ -294,7 +294,6 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
-    // ---- ВСТАВЬТЕ НИЖЕ БЛОК TP/SL ----
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
     if tp_perc != 0 and sl_perc != 0:
@@ -328,7 +327,6 @@ def webhook():
             logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
         except Exception as e:
             logging.error(f"❌ Ошибка установки SL ордера для {symbol_fixed}: {e}")
-    // ---- КОНЕЦ БЛОКА TP/SL ----
 
     open_message = (
         f"🚀 Сделка открыта!\n"
