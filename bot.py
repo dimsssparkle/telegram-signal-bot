@@ -211,6 +211,7 @@ def poll_telegram_commands():
 # Вебхук для открытия позиции
 @app.route("/webhook", methods=["POST"])
 def webhook():
+
     global trading_enabled
 
     if not trading_enabled:
@@ -218,13 +219,11 @@ def webhook():
         return {"status": "skipped", "message": "Trading is disabled."}, 200
 
     data = request.get_json()
+    for key, value in data.items():
+    
+        logging.info(f"Параметр {key}: {value}")
+    
     logging.debug(f"DEBUG: Получен JSON: {data}")
-
-    if data:
-        for key, value in data.items():
-            logging.info(f"Параметр {key}: {value}")
-    else:
-        logging.info("Данные не получены или пусты.")
 
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
