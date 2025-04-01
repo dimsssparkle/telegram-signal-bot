@@ -212,6 +212,14 @@ def poll_telegram_commands():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     global trading_enabled
+
+    data = request.get_json()
+    if data:
+        for key, value in data.items():
+            logging.info(f"Параметр {key}: {value}")
+    else:
+        logging.info("Данные не получены или пусты.")
+
     if not trading_enabled:
         logging.info("⚠️ Торговля отключена. Сигналы игнорируются.")
         return {"status": "skipped", "message": "Trading is disabled."}, 200
