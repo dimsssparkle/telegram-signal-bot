@@ -147,13 +147,25 @@ def start_userdata_stream():
     twm.start_futures_user_socket(callback=handle_user_data)
     logging.info("📡 Binance User Data Stream запущен для отслеживания закрытия позиций.")
 
+    # Получаем listenKey вручную после запуска WebSocket
+    listen_key = binance_client.futures_stream_get_listen_key()
+
     def keep_alive():
+        global listen_key
         while True:
             time.sleep(30 * 60)
             try:
-                binance_client.futures_stream_keepalive(listenKey=twm.listen_key)
+                binance_client.futures_stream_keepalive(listenKey=listen_key)
+                logging.info("✅ ListenKey keepalive выполнен успешно.")
             except Exception as e:
                 logging.error(f"❌ Ошибка keepalive: {e}")
+                # Попытаться обновить listenKey
+                try:
+                    listen_key = binance_client.futures_stream_get_listen_key()
+                    logging.info("✅ ListenKey обновлен.")
+                except Exception as ex:
+                    logging.error(f"❌ Ошибка обновления listenKey: {ex}")
+
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
