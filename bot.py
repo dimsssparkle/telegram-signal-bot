@@ -220,7 +220,7 @@ def webhook():
 
     data = request.get_json()
     for key, value in data.items():
-        logging.info({data})
+    logging.info(f"Параметр {key}: {value}")
 
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
