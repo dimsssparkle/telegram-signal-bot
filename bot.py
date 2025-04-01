@@ -294,6 +294,42 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
+    // ---- ВСТАВЬТЕ НИЖЕ БЛОК TP/SL ----
+    tp_perc = float(data.get("tp_perc", 0))
+    sl_perc = float(data.get("sl_perc", 0))
+    if tp_perc != 0 and sl_perc != 0:
+        if signal == "long":
+            tp_level = break_even_price * (1 + tp_perc/100)
+            sl_level = break_even_price * (1 - sl_perc/100)
+        else:
+            tp_level = break_even_price * (1 - tp_perc/100)
+            sl_level = break_even_price * (1 + sl_perc/100)
+        try:
+            tp_order = binance_client.futures_create_order(
+                symbol=symbol_fixed,
+                side="SELL" if signal=="long" else "BUY",
+                type="TAKE_PROFIT_MARKET",
+                stopPrice=round(tp_level, 2),
+                closePosition=True,
+                timeInForce="GTC"
+            )
+            logging.info(f"✅ TP ордер установлен для {symbol_fixed}: {tp_order}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки TP ордера для {symbol_fixed}: {e}")
+        try:
+            sl_order = binance_client.futures_create_order(
+                symbol=symbol_fixed,
+                side="SELL" if signal=="long" else "BUY",
+                type="STOP_MARKET",
+                stopPrice=round(sl_level, 2),
+                closePosition=True,
+                timeInForce="GTC"
+            )
+            logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки SL ордера для {symbol_fixed}: {e}")
+    // ---- КОНЕЦ БЛОКА TP/SL ----
+
     open_message = (
         f"🚀 Сделка открыта!\n"
         f"Символ: {symbol_fixed}\n"
