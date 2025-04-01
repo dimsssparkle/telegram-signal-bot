@@ -213,19 +213,19 @@ def poll_telegram_commands():
 def webhook():
     global trading_enabled
 
-    data = request.get_json()
-    if data:
-        for key, value in data.items():
-            logging.info(f"Параметр {key}: {value}")
-    else:
-        logging.info("Данные не получены или пусты.")
-
     if not trading_enabled:
         logging.info("⚠️ Торговля отключена. Сигналы игнорируются.")
         return {"status": "skipped", "message": "Trading is disabled."}, 200
 
     data = request.get_json()
     logging.debug(f"DEBUG: Получен JSON: {data}")
+
+    if data:
+        for key, value in data.items():
+            logging.info(f"Параметр {key}: {value}")
+    else:
+        logging.info("Данные не получены или пусты.")
+
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
