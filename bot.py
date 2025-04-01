@@ -294,8 +294,8 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
-    tp_perc = float(data.get("tp_perc", 0))
-    sl_perc = float(data.get("sl_perc", 0))
+    tp_perc = float(data.get("tp_perc", 0.2))
+    sl_perc = float(data.get("sl_perc", 0.15))
     if tp_perc != 0 and sl_perc != 0:
         if signal == "long":
             tp_level = break_even_price * (1 + tp_perc/100)
