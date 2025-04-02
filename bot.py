@@ -128,9 +128,17 @@ def handle_user_data(msg):
             except Exception as e:
                 logging.error(f"❌ Ошибка получения комиссии для закрывающей сделки: {e}")
         entry_data = positions_entry_data.pop(symbol, {})
-        # После получения entry_data
+        entry_price = entry_data.get("entry_price", 0)
+        leverage = entry_data.get("leverage", 1)
+        commission_entry = entry_data.get("commission_entry", 0)
+        break_even_price = entry_data.get("break_even_price", 0)
+        # Извлекаем tp_perc и sl_perc из сохранённых данных
         tp_perc = entry_data.get("tp_perc", 0)
         sl_perc = entry_data.get("sl_perc", 0)
+        total_commission = commission_entry + commission_exit
+        net_pnl = pnl - total_commission
+        net_break_even = break_even_price + total_commission
+        direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
         if tp_perc != 0 and sl_perc != 0:
             if direction == "LONG":
                 tp_level = break_even_price * (1 + tp_perc/100)
@@ -138,14 +146,6 @@ def handle_user_data(msg):
             else:
                 tp_level = break_even_price * (1 - tp_perc/100)
                 sl_level = break_even_price * (1 + sl_perc/100)
-        entry_price = entry_data.get("entry_price", 0)
-        leverage = entry_data.get("leverage", 1)
-        commission_entry = entry_data.get("commission_entry", 0)
-        break_even_price = entry_data.get("break_even_price", 0)
-        total_commission = commission_entry + commission_exit
-        net_pnl = pnl - total_commission
-        net_break_even = break_even_price + total_commission
-        direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
         # Определяем метод закрытия по типу ордера
         closing_method = "MANUAL"
         if order.get("ot") == "TAKE_PROFIT_MARKET":
