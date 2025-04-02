@@ -103,7 +103,6 @@ def handle_user_data(msg):
     if msg.get('e') != 'ORDER_TRADE_UPDATE':
         return
     order = msg.get('o', {})
-    logging.info("Order object: " + str(order))
     symbol = order.get('s', '')
     if symbol not in positions_entry_data:
         return
@@ -123,9 +122,9 @@ def handle_user_data(msg):
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
         # Определяем метод закрытия по типу ордера
         closing_method = "MANUAL"
-        if order.get("type") == "TAKE_PROFIT_MARKET":
+        if order.get("ot") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
-        elif order.get("type") == "STOP_MARKET":
+        elif order.get("ot") == "STOP_MARKET":
             closing_method = "SL"
         result_indicator = "🟩" if net_pnl > 0 else "🟥"
         message = (
