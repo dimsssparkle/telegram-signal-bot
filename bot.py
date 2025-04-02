@@ -131,13 +131,13 @@ def handle_user_data(msg):
         # После получения entry_data
         tp_perc = entry_data.get("tp_perc", 0)
         sl_perc = entry_data.get("sl_perc", 0)
-        # if tp_perc != 0 and sl_perc != 0:
-        #     if direction == "LONG":
-        #         tp_level = break_even_price * (1 + tp_perc/100)
-        #         sl_level = break_even_price * (1 - sl_perc/100)
-        #     else:
-        #         tp_level = break_even_price * (1 - tp_perc/100)
-        #         sl_level = break_even_price * (1 + sl_perc/100)
+        if tp_perc != 0 and sl_perc != 0:
+            if direction == "LONG":
+                tp_level = break_even_price * (1 + tp_perc/100)
+                sl_level = break_even_price * (1 - sl_perc/100)
+            else:
+                tp_level = break_even_price * (1 - tp_perc/100)
+                sl_level = break_even_price * (1 + sl_perc/100)
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
         commission_entry = entry_data.get("commission_entry", 0)
