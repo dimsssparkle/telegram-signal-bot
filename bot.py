@@ -111,7 +111,15 @@ def handle_user_data(msg):
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
-        commission_exit = float(order.get('commission', 0))
+        commission_exit = 0.0
+        closing_order_id = order.get("orderId")
+        try:
+            closing_trades = binance_client.futures_account_trades(symbol=symbol)
+            for trade in closing_trades:
+                if trade.get("orderId") == closing_order_id:
+                    commission_exit += float(trade.get("commission", 0))
+        except Exception as e:
+            logging.error(f"❌ Ошибка получения комиссии для закрывающей сделки: {e}")
         entry_data = positions_entry_data.pop(symbol, {})
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
