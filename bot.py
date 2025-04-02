@@ -97,7 +97,7 @@ def close_all_positions():
     else:
         send_telegram_message("ℹ️ Нет открытых позиций для закрытия.")
 
-# --------------------------
+# -------------------------
 # Обработка закрытия позиции через Binance User Data Stream
 def handle_user_data(msg):
     if msg.get('e') != 'ORDER_TRADE_UPDATE':
