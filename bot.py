@@ -35,7 +35,7 @@ try:
 except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
-# Глобальный словарь для хранения данных открытых позиций по символам
+# Глобальный словарь для хранения данных открытых позиций по символам.
 # Для каждого символа сохраняются данные: entry_price, quantity, leverage, commission_entry, break_even_price
 positions_entry_data = {}
 
@@ -120,6 +120,7 @@ def handle_user_data(msg):
         net_pnl = pnl - total_commission
         net_break_even = break_even_price + total_commission
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
+        # Определяем метод закрытия по типу ордера
         closing_method = "MANUAL"
         if order.get("origType") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
@@ -144,6 +145,30 @@ def handle_user_data(msg):
         send_telegram_message(message)
         logging.info("DEBUG: Telegram сообщение о закрытии отправлено:")
         logging.info(message)
+        # Отменяем висячие ордера для данного символа, чтобы не оставались активными противоположные ордера
+        try:
+            binance_client.futures_cancel_all_open_orders(symbol=symbol)
+            logging.info(f"🧹 Висячие ордера для {symbol} отменены.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
+
+# --------------------------
+# Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
+def auto_cancel_worker():
+    while True:
+        time.sleep(30)
+        try:
+            open_orders = binance_client.futures_get_open_orders()
+            if open_orders:
+                # Для каждого ордера проверяем, есть ли позиция по данному символу
+                for order in open_orders:
+                    symbol = order.get("symbol")
+                    pos = get_position(symbol)
+                    if pos is None or abs(float(pos.get("positionAmt", 0))) == 0:
+                        binance_client.futures_cancel_all_open_orders(symbol=symbol)
+                        logging.info(f"🧹 Автоочистка: Ордеры для {symbol} отменены, так как позиции нет.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка автоочистки ордеров: {e}")
 
 # --------------------------
 # Запуск потока Binance User Data Stream
@@ -152,7 +177,9 @@ def start_userdata_stream():
     twm.start()
     twm.start_futures_user_socket(callback=handle_user_data)
     logging.info("📡 Binance User Data Stream запущен для отслеживания закрытия позиций.")
-    # Получаем listenKey вручную после запуска WebSocket
+    # Запускаем автоочистку ордеров
+    threading.Thread(target=auto_cancel_worker, daemon=True).start()
+    # Получаем listenKey вручнo после запуска WebSocket
     listen_key = binance_client.futures_stream_get_listen_key()
     def keep_alive():
         global listen_key
@@ -296,6 +323,7 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
+    # Получаем TP/SL процентные значения
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
     tp_sl_message = ""
@@ -358,7 +386,6 @@ def webhook():
     }
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
-
 
 if __name__ == "__main__":
     threading.Thread(target=poll_telegram_commands, daemon=True).start()
