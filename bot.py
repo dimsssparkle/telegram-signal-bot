@@ -112,14 +112,21 @@ def handle_user_data(msg):
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
         commission_exit = 0.0
-        closing_order_id = order.get("orderId")
-        try:
-            closing_trades = binance_client.futures_account_trades(symbol=symbol)
-            for trade in closing_trades:
-                if trade.get("orderId") == closing_order_id:
-                    commission_exit += float(trade.get("commission", 0))
-        except Exception as e:
-            logging.error(f"❌ Ошибка получения комиссии для закрывающей сделки: {e}")
+        closing_order_id = None
+        # Предположим, что вы получили закрывающий ордер tp_order или sl_order
+        # И сохраните его orderId, например, для TP:
+        if tp_perc != 0 and sl_perc != 0:
+            # После установки TP/SL ордеров:
+            closing_order_id = tp_order.get("orderId")  # или sl_order.get("orderId"), в зависимости от того, какой ордер сработал
+            time.sleep(2)  # небольшая задержка для обновления истории трейдов
+            try:
+                closing_trades = binance_client.futures_account_trades(symbol=symbol_fixed)
+                for trade in closing_trades:
+                    if trade.get("orderId") == closing_order_id:
+                        commission_exit += float(trade.get("commission", 0))
+            except Exception as e:
+                logging.error(f"❌ Ошибка получения комиссии для закрывающей сделки: {e}")
+
         entry_data = positions_entry_data.pop(symbol, {})
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
