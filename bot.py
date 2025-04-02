@@ -103,6 +103,7 @@ def handle_user_data(msg):
     if msg.get('e') != 'ORDER_TRADE_UPDATE':
         return
     order = msg.get('o', {})
+    logging.info("Order object: " + str(order))
     symbol = order.get('s', '')
     if symbol not in positions_entry_data:
         return
