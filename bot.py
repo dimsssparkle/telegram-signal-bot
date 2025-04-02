@@ -120,7 +120,6 @@ def handle_user_data(msg):
         net_pnl = pnl - total_commission
         net_break_even = break_even_price + total_commission
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
-        # Определяем метод закрытия по типу ордера (если origType присутствует)
         closing_method = "MANUAL"
         if order.get("origType") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
@@ -297,10 +296,9 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
-    # Получаем TP/SL процентные значения (из TradingView они могут быть равны 0, если не переданы)
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
-    # Если ненулевые, рассчитываем уровни TP и SL от цены безубыточности
+    tp_sl_message = ""
     if tp_perc != 0 and sl_perc != 0:
         if signal == "long":
             tp_level = break_even_price * (1 + tp_perc/100)
@@ -332,6 +330,7 @@ def webhook():
             logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
         except Exception as e:
             logging.error(f"❌ Ошибка установки SL ордера для {symbol_fixed}: {e}")
+        tp_sl_message = f"\nTP: {round(tp_level,2)} ({tp_perc}%)\nSL: {round(sl_level,2)} ({sl_perc}%)"
 
     open_message = (
         f"🚀 Сделка открыта!\n"
@@ -344,6 +343,7 @@ def webhook():
         f"Цена ликвидации: {liq_price}\n"
         f"Комиссия входа: {commission_entry}\n"
         f"Цена безубыточности: {break_even_price}"
+        f"{tp_sl_message}"
     )
     send_telegram_message(open_message)
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
@@ -358,6 +358,7 @@ def webhook():
     }
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
+
 
 if __name__ == "__main__":
     threading.Thread(target=poll_telegram_commands, daemon=True).start()
