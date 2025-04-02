@@ -120,6 +120,12 @@ def handle_user_data(msg):
         net_pnl = pnl - total_commission
         net_break_even = break_even_price + total_commission
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
+        # Определяем метод закрытия по типу ордера (если origType присутствует)
+        closing_method = "MANUAL"
+        if order.get("origType") == "TAKE_PROFIT_MARKET":
+            closing_method = "TP"
+        elif order.get("origType") == "STOP_MARKET":
+            closing_method = "SL"
         result_indicator = "🟩" if net_pnl > 0 else "🟥"
         message = (
             f"{result_indicator} Сделка закрыта!\n"
@@ -134,22 +140,21 @@ def handle_user_data(msg):
             f"Чистый PnL: {net_pnl}\n"
             f"Цена безубыточности: {break_even_price}\n"
             f"Чистая цена безубыточности: {net_break_even}\n"
-            f"Метод закрытия: MANUAL"
+            f"Метод закрытия: {closing_method}"
         )
         send_telegram_message(message)
         logging.info("DEBUG: Telegram сообщение о закрытии отправлено:")
         logging.info(message)
 
+# --------------------------
 # Запуск потока Binance User Data Stream
 def start_userdata_stream():
     twm = ThreadedWebsocketManager(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
     twm.start()
     twm.start_futures_user_socket(callback=handle_user_data)
     logging.info("📡 Binance User Data Stream запущен для отслеживания закрытия позиций.")
-
     # Получаем listenKey вручную после запуска WebSocket
     listen_key = binance_client.futures_stream_get_listen_key()
-
     def keep_alive():
         global listen_key
         while True:
@@ -159,13 +164,11 @@ def start_userdata_stream():
                 logging.info("✅ ListenKey keepalive выполнен успешно.")
             except Exception as e:
                 logging.error(f"❌ Ошибка keepalive: {e}")
-                # Попытаться обновить listenKey
                 try:
                     listen_key = binance_client.futures_stream_get_listen_key()
                     logging.info("✅ ListenKey обновлен.")
                 except Exception as ex:
                     logging.error(f"❌ Ошибка обновления listenKey: {ex}")
-
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
@@ -217,9 +220,6 @@ def webhook():
         return {"status": "skipped", "message": "Trading is disabled."}, 200
 
     data = request.get_json()
-    # Отправляем в Telegram полное содержимое полученных данных для отладки
-    send_telegram_message("Получены данные из TradingView: " + str(data))
-    
     logging.debug(f"DEBUG: Получен JSON: {data}")
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
@@ -297,8 +297,10 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
+    # Получаем TP/SL процентные значения (из TradingView они могут быть равны 0, если не переданы)
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
+    # Если ненулевые, рассчитываем уровни TP и SL от цены безубыточности
     if tp_perc != 0 and sl_perc != 0:
         if signal == "long":
             tp_level = break_even_price * (1 + tp_perc/100)
@@ -357,11 +359,8 @@ def webhook():
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
-
 if __name__ == "__main__":
-    # Запускаем поток опроса Telegram команд (/pause, /resume, /close_orders, /close_orders_pause_trading)
     threading.Thread(target=poll_telegram_commands, daemon=True).start()
-    # Запускаем поток Binance User Data Stream для отслеживания закрытия позиций
     threading.Thread(target=start_userdata_stream, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
