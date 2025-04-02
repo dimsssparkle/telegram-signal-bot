@@ -211,17 +211,16 @@ def poll_telegram_commands():
 # Вебхук для открытия позиции
 @app.route("/webhook", methods=["POST"])
 def webhook():
-
     global trading_enabled
-
     if not trading_enabled:
         logging.info("⚠️ Торговля отключена. Сигналы игнорируются.")
         return {"status": "skipped", "message": "Trading is disabled."}, 200
 
     data = request.get_json()
-    for key, value in data.items():
-        logging.info(f"Параметр {key}: {value}")
-
+    # Отправляем в Telegram полное содержимое полученных данных для отладки
+    send_telegram_message("Получены данные из TradingView: " + str(data))
+    
+    logging.debug(f"DEBUG: Получен JSON: {data}")
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
@@ -357,6 +356,7 @@ def webhook():
     }
 
     return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
+
 
 if __name__ == "__main__":
     # Запускаем поток опроса Telegram команд (/pause, /resume, /close_orders, /close_orders_pause_trading)
