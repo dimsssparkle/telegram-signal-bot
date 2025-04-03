@@ -39,6 +39,9 @@ except Exception as e:
 # Для каждого символа сохраняются данные: entry_price, quantity, leverage, commission_entry, break_even_price, tp_perc, sl_perc
 positions_entry_data = {}
 
+# Глобальная переменная для listen_key
+listen_key = None
+
 # Функция отправки сообщения в Telegram
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -125,7 +128,6 @@ def handle_user_data(msg):
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
         
-        # Получаем закрывающий трейд – берем последний трейд из истории
         commission_exit = 0.0
         try:
             trades = binance_client.futures_account_trades(symbol=symbol)
@@ -162,14 +164,12 @@ def handle_user_data(msg):
         else:
             tp_level = sl_level = None
 
-        # Определяем метод закрытия по типу ордера
         closing_method = "MANUAL"
         if order.get("ot") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
         elif order.get("ot") == "STOP_MARKET":
             closing_method = "SL"
         
-        # Получаем текущий Futures баланс
         balance = get_futures_balance()
         balance_message = f"\nFutures баланс: USDT {balance}" if balance is not None else ""
         
@@ -196,7 +196,6 @@ def handle_user_data(msg):
         logging.info("DEBUG: Telegram сообщение о закрытии отправлено:")
         logging.info(message)
         
-        # Отменяем висячие ордера для данного символа
         try:
             binance_client.futures_cancel_all_open_orders(symbol=symbol)
             logging.info(f"🧹 Висячие ордера для {symbol} отменены.")
@@ -223,12 +222,15 @@ def auto_cancel_worker():
 # --------------------------
 # Запуск потока Binance User Data Stream
 def start_userdata_stream():
+    global listen_key
     twm = ThreadedWebsocketManager(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
     twm.start()
     twm.start_futures_user_socket(callback=handle_user_data)
     logging.info("📡 Binance User Data Stream запущен для отслеживания закрытия позиций.")
     threading.Thread(target=auto_cancel_worker, daemon=True).start()
+    
     listen_key = binance_client.futures_stream_get_listen_key()
+    
     def keep_alive():
         global listen_key
         while True:
@@ -311,7 +313,7 @@ def webhook():
 
     # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
     leverage = int(data.get("leverage", 20))
-    quantity = float(data.get("quantity", 0.5))
+    quantity = float(data.get("quantity", 0.02))
 
     logging.info(f"📥 Получен сигнал: {signal}")
     logging.info(f"📥 Символ: {symbol_received} -> {symbol_fixed}")
@@ -352,7 +354,7 @@ def webhook():
 
     side = "BUY" if signal == "long" else "SELL"
 
-    # Округляем quantity до 3 знаков (пример для ETHUSDT)
+    # Округляем quantity до заданного количества знаков (например, 3 для ETHUSDT)
     quantity = round(quantity, 3)
 
     try:
