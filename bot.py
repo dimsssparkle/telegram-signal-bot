@@ -65,6 +65,17 @@ def get_position(symbol):
         logging.error(f"❌ Ошибка получения позиции для {symbol}: {e}")
         return None
 
+# Функция для получения текущего Futures баланса (например, USDT)
+def get_futures_balance():
+    try:
+        balances = binance_client.futures_account_balance()
+        usdt_balance = next((item for item in balances if item["asset"] == "USDT"), None)
+        if usdt_balance:
+            return float(usdt_balance["balance"])
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения баланса: {e}")
+    return None
+
 # --------------------------
 # Функция закрытия всех открытых позиций с использованием reduceOnly=True
 def close_all_positions():
@@ -108,7 +119,7 @@ def handle_user_data(msg):
         return
 
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Даем немного времени (например, 2 секунды), чтобы история трейдов обновилась
+        # Даем немного времени, чтобы история трейдов обновилась
         time.sleep(2)
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
@@ -158,6 +169,10 @@ def handle_user_data(msg):
         elif order.get("ot") == "STOP_MARKET":
             closing_method = "SL"
         
+        # Получаем текущий Futures баланс
+        balance = get_futures_balance()
+        balance_message = f"\nFutures баланс: USDT {balance}" if balance is not None else ""
+        
         result_indicator = "🟩" if net_pnl > 0 else "🟥"
         message = (
             f"{result_indicator} Сделка закрыта!\n"
@@ -175,6 +190,7 @@ def handle_user_data(msg):
             f"Цена безубыточности: {break_even_price}\n"
             f"Чистая цена безубыточности: {net_break_even}\n"
             f"Метод закрытия: {closing_method}"
+            f"{balance_message}"
         )
         send_telegram_message(message)
         logging.info("DEBUG: Telegram сообщение о закрытии отправлено:")
@@ -187,6 +203,22 @@ def handle_user_data(msg):
         except Exception as e:
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
 
+# --------------------------
+# Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
+def auto_cancel_worker():
+    while True:
+        time.sleep(30)
+        try:
+            open_orders = binance_client.futures_get_open_orders()
+            if open_orders:
+                for order in open_orders:
+                    symbol = order.get("symbol")
+                    pos = get_position(symbol)
+                    if pos is None or abs(float(pos.get("positionAmt", 0))) == 0:
+                        binance_client.futures_cancel_all_open_orders(symbol=symbol)
+                        logging.info(f"🧹 Автоочистка: Ордеры для {symbol} отменены, так как позиции нет.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка автоочистки ордеров: {e}")
 
 # --------------------------
 # Запуск потока Binance User Data Stream
@@ -214,7 +246,7 @@ def start_userdata_stream():
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
-# Функция опроса Telegram для управления ботом (команды /pause, /resume, /close_orders, /close_orders_pause_trading)
+# Функция опроса Telegram для управления ботом (команды /pause, /resume, /close_orders, /close_orders_pause_trading, /balance)
 def poll_telegram_commands():
     global trading_enabled
     offset = None
@@ -248,6 +280,12 @@ def poll_telegram_commands():
                         trading_enabled = False
                         send_telegram_message("🚫 Все позиции закрыты и торговля приостановлена.")
                         logging.info("Получена команда /close_orders_pause_trading. Позиции закрыты, торговля отключена.")
+                    elif text == "/balance":
+                        balance = get_futures_balance()
+                        if balance is not None:
+                            send_telegram_message(f"💰 Текущий Futures баланс: USDT {balance}")
+                        else:
+                            send_telegram_message("❌ Не удалось получить баланс.")
         except Exception as e:
             logging.error(f"❌ Ошибка при опросе Telegram: {e}")
         time.sleep(2)
