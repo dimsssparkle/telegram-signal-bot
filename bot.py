@@ -333,17 +333,18 @@ def webhook():
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
 
+    # Получаем данные о символе из futures_exchange_info
     exchange_info = binance_client.futures_exchange_info()
     symbol_info = next((s for s in exchange_info["symbols"] if s["symbol"] == symbol_fixed), None)
     if symbol_info:
         min_notional = None
         for f in symbol_info["filters"]:
-            if f["filterType"] == "MIN_NOTIONAL":
+            if f.get("filterType") == "MIN_NOTIONAL":
                 min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
             min_notional = 20.0
-        quantity_precision = int(symbol_info["quantityPrecision"])
+        quantity_precision = int(symbol_info.get("quantityPrecision", 3))
         min_qty_required = min_notional / last_price
         min_qty_required = round(min_qty_required, quantity_precision)
         if quantity < min_qty_required:
