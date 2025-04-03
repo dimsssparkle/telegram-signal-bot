@@ -336,7 +336,7 @@ def webhook():
     min_qty_required = min_notional / last_price
     if quantity < min_qty_required:
         logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
-        quantity = min_qty_required
+        quantity = min_qty_required * 1.001
 
     side = "BUY" if signal == "long" else "SELL"
 
