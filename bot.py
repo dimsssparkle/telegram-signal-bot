@@ -108,17 +108,17 @@ def handle_user_data(msg):
         return
 
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Задержка для обновления истории трейдов (например, 3 секунды)
-        time.sleep(3)
+        # Увеличиваем задержку, чтобы история трейдов успела обновиться
+        time.sleep(5)
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
         commission_exit = 0.0
         try:
             closing_trades = binance_client.futures_account_trades(symbol=symbol)
-            # Отладочный вывод трейдов для закрывающего ордера:
+            # Фильтруем трейды по orderId закрывающего ордера
             relevant_trades = [trade for trade in closing_trades if trade.get("orderId") == order.get("orderId")]
-            logging.info("Закрывающие трейды: " + str(relevant_trades))
+            logging.info("Relevant closing trades: " + str(relevant_trades))
             for trade in relevant_trades:
                 commission_exit += float(trade.get("commission", 0))
         except Exception as e:
@@ -138,7 +138,6 @@ def handle_user_data(msg):
         net_break_even = break_even_price + total_commission
         direction = "LONG" if order.get('S', '') == "SELL" else "SHORT"
         
-        # Рассчитываем TP/SL уровни, если заданы проценты
         if tp_perc != 0 and sl_perc != 0:
             if direction == "LONG":
                 tp_level = break_even_price * (1 + tp_perc/100)
@@ -149,7 +148,7 @@ def handle_user_data(msg):
         else:
             tp_level = sl_level = None
         
-        # Определяем метод закрытия по типу ордера
+        # Определяем метод закрытия по типу ордера (используем поле 'ot')
         closing_method = "MANUAL"
         if order.get("ot") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
@@ -182,6 +181,7 @@ def handle_user_data(msg):
             logging.info(f"🧹 Висячие ордера для {symbol} отменены.")
         except Exception as e:
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
+
 
 # --------------------------
 # Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
