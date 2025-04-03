@@ -338,11 +338,11 @@ def webhook():
     if symbol_info:
         min_notional = None
         for f in symbol_info["filters"]:
-            if f.get("filterType") == "MIN_NOTIONAL":
-                min_notional = float(f.get("minNotional", 20.0))
+            if f.get("filterType") == "MIN_NOTIONAL" and "minNotional" in f:
+                min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
-            min_notional = 20.0
+            min_notional = 20.0  # если фильтр не найден, используем 20 USDT по умолчанию
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
         min_qty_required = min_notional / last_price
         min_qty_required = round(min_qty_required, quantity_precision)
