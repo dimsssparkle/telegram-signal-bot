@@ -108,17 +108,19 @@ def handle_user_data(msg):
         return
 
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Увеличиваем задержку, чтобы история трейдов успела обновиться
+        # Задержка для обновления истории трейдов (например, 5 секунд)
         time.sleep(5)
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
+        
+        # Суммируем комиссии для закрывающего ордера
         commission_exit = 0.0
         try:
             closing_trades = binance_client.futures_account_trades(symbol=symbol)
             # Фильтруем трейды по orderId закрывающего ордера
             relevant_trades = [trade for trade in closing_trades if trade.get("orderId") == order.get("orderId")]
-            logging.info("Relevant closing trades: " + str(relevant_trades))
+            logging.info("Закрывающие трейды: " + str(relevant_trades))
             for trade in relevant_trades:
                 commission_exit += float(trade.get("commission", 0))
         except Exception as e:
@@ -147,8 +149,8 @@ def handle_user_data(msg):
                 sl_level = break_even_price * (1 + sl_perc/100)
         else:
             tp_level = sl_level = None
-        
-        # Определяем метод закрытия по типу ордера (используем поле 'ot')
+
+        # Определяем метод закрытия по типу ордера
         closing_method = "MANUAL"
         if order.get("ot") == "TAKE_PROFIT_MARKET":
             closing_method = "TP"
@@ -164,6 +166,8 @@ def handle_user_data(msg):
             f"Цена входа: {entry_price}\n"
             f"Цена выхода: {exit_price}\n"
             f"Плечо: {leverage}\n"
+            f"Комиссия входа: {commission_entry}\n"
+            f"Комиссия выхода: {commission_exit}\n"
             f"Сумма комиссий: {total_commission}\n"
             f"PnL: {pnl}\n"
             f"Чистый PnL: {net_pnl}\n"
@@ -181,7 +185,6 @@ def handle_user_data(msg):
             logging.info(f"🧹 Висячие ордера для {symbol} отменены.")
         except Exception as e:
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
-
 
 # --------------------------
 # Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
