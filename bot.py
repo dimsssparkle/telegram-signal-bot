@@ -108,23 +108,24 @@ def handle_user_data(msg):
         return
 
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Задержка для обновления истории трейдов (например, 5 секунд)
-        time.sleep(5)
+        # Даем немного времени (например, 2 секунды), чтобы история трейдов обновилась
+        time.sleep(2)
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
         
-        # Суммируем комиссии для закрывающего ордера
+        # Получаем закрывающий трейд – берем последний трейд из истории
         commission_exit = 0.0
         try:
-            closing_trades = binance_client.futures_account_trades(symbol=symbol)
-            # Фильтруем трейды по orderId закрывающего ордера
-            relevant_trades = [trade for trade in closing_trades if trade.get("orderId") == order.get("orderId")]
-            logging.info("Закрывающие трейды: " + str(relevant_trades))
-            for trade in relevant_trades:
-                commission_exit += float(trade.get("commission", 0))
+            trades = binance_client.futures_account_trades(symbol=symbol)
+            if trades:
+                last_trade = trades[-1]
+                commission_exit = float(last_trade.get('commission', 0))
+                logging.info("Последний трейд для закрытия: " + str(last_trade))
+            else:
+                logging.info("Трейдов для закрывающего ордера не найдено.")
         except Exception as e:
-            logging.error(f"❌ Ошибка получения комиссии для закрывающей сделки: {e}")
+            logging.error(f"❌ Ошибка получения трейдов для закрывающей сделки: {e}")
         
         # Извлекаем данные об открытии сделки
         entry_data = positions_entry_data.pop(symbol, {})
@@ -186,22 +187,6 @@ def handle_user_data(msg):
         except Exception as e:
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
 
-# --------------------------
-# Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
-def auto_cancel_worker():
-    while True:
-        time.sleep(30)
-        try:
-            open_orders = binance_client.futures_get_open_orders()
-            if open_orders:
-                for order in open_orders:
-                    symbol = order.get("symbol")
-                    pos = get_position(symbol)
-                    if pos is None or abs(float(pos.get("positionAmt", 0))) == 0:
-                        binance_client.futures_cancel_all_open_orders(symbol=symbol)
-                        logging.info(f"🧹 Автоочистка: Ордеры для {symbol} отменены, так как позиции нет.")
-        except Exception as e:
-            logging.error(f"❌ Ошибка автоочистки ордеров: {e}")
 
 # --------------------------
 # Запуск потока Binance User Data Stream
