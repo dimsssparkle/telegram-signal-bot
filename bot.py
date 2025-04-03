@@ -340,6 +340,9 @@ def webhook():
 
     side = "BUY" if signal == "long" else "SELL"
 
+    # Округляем quantity до 3 знаков (пример для ETHUSDT)
+    quantity = round(quantity, 3)
+
     try:
         order = binance_client.futures_create_order(
             symbol=symbol_fixed,
