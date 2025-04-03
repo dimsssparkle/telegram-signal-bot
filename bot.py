@@ -311,7 +311,7 @@ def webhook():
 
     # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
     leverage = int(data.get("leverage", 20))
-    quantity = float(data.get("quantity", 0.02))
+    quantity = float(data.get("quantity", 0.5))
 
     logging.info(f"📥 Получен сигнал: {signal}")
     logging.info(f"📥 Символ: {symbol_received} -> {symbol_fixed}")
