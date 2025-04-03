@@ -332,11 +332,18 @@ def webhook():
 
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
-    min_notional = 20.0
-    min_qty_required = min_notional / last_price
-    if quantity < min_qty_required:
-        logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
-        quantity = min_qty_required * 1.01
+
+    exchange_info = binance_client.futures_exchange_info()
+    symbol_info = next((s for s in exchange_info["symbols"] if s["symbol"] == symbol_fixed), None)
+    if symbol_info:
+        # Например, фильтр с индексом 2 содержит параметр "minNotional"
+        min_notional = float(symbol_info["filters"][2]["minNotional"])
+        quantity_precision = int(symbol_info["quantityPrecision"])
+        min_qty_required = min_notional / last_price
+        min_qty_required = round(min_qty_required, quantity_precision)
+        if quantity < min_qty_required:
+            logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
+            quantity = min_qty_required
 
     side = "BUY" if signal == "long" else "SELL"
 
