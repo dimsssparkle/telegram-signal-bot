@@ -36,7 +36,7 @@ except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
 # Глобальный словарь для хранения данных открытых позиций по символам.
-# Для каждого символа сохраняются данные: signal, entry_price, quantity, leverage, used_margin,
+# Сохраняются: signal, entry_price, quantity, leverage, used_margin,
 # commission_entry, break_even_price, liq_price, tp_perc, sl_perc
 positions_entry_data = {}
 
@@ -126,8 +126,8 @@ def switch_position(new_signal, symbol, leverage, quantity):
         if current_amt > 0:
             current_direction = "long" if float(current_position.get("positionAmt", 0)) > 0 else "short"
             if current_direction != new_signal:
-                logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, закрываем позицию.")
-                close_all_positions()  # Альтернативно, закрыть только для данного символа
+                logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
+                close_all_positions()  # Закрываем все позиции по данному символу
                 time.sleep(0.5)  # Ждем обновления данных
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
@@ -385,6 +385,7 @@ def webhook():
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
 
+    # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
     leverage = int(data.get("leverage", 20))
     quantity = float(data.get("quantity", 0.02))
 
@@ -392,15 +393,25 @@ def webhook():
     logging.info(f"📥 Символ: {symbol_received} -> {symbol_fixed}")
     logging.info(f"📥 Leverage: {leverage}, Quantity: {quantity}")
 
-    pos = get_position(symbol_fixed)
-    if pos and abs(float(pos.get("positionAmt", 0))) > 0:
-        logging.info(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
-        send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
-        return {"status": "skipped", "message": "Position already open."}
-
-    result = switch_position(signal, symbol_fixed, leverage, quantity)
-    if result["status"] != "ok":
-        return result
+    current_pos = get_position(symbol_fixed)
+    # Если позиция открыта, проверяем направление
+    if current_pos and abs(float(current_pos.get("positionAmt", 0))) > 0:
+        current_direction = "long" if float(current_pos.get("positionAmt", 0)) > 0 else "short"
+        if current_direction != signal:
+            # Если сигнал противоположный, переключаем позицию
+            result = switch_position(signal, symbol_fixed, leverage, quantity)
+            if result["status"] != "ok":
+                return result
+        else:
+            msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
+            logging.info(msg)
+            send_telegram_message(msg)
+            return {"status": "skipped", "message": "Position already open."}
+    else:
+        # Если позиции нет, открываем новую через switch_position
+        result = switch_position(signal, symbol_fixed, leverage, quantity)
+        if result["status"] != "ok":
+            return result
 
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
@@ -414,7 +425,7 @@ def webhook():
                 min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
-            min_notional = 20.0
+            min_notional = 20.0  # если фильтр не найден, используем 20 USDT по умолчанию
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
         min_qty_required = min_notional / last_price
         min_qty_required = round(min_qty_required, quantity_precision)
