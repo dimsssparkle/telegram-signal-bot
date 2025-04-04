@@ -113,6 +113,50 @@ def close_all_positions():
         send_telegram_message("ℹ️ Нет открытых позиций для закрытия.")
 
 # --------------------------
+# Функция переключения позиции (switch_position)
+def switch_position(new_signal, symbol, leverage, quantity):
+    """
+    Если уже открыта позиция с направлением, отличным от new_signal,
+    закрываем текущую позицию и открываем новую.
+    Если позиция с тем же направлением уже открыта, сигнал игнорируется.
+    """
+    current_position = get_position(symbol)
+    if current_position:
+        current_amt = abs(float(current_position.get("positionAmt", 0)))
+        if current_amt > 0:
+            current_direction = "long" if float(current_position.get("positionAmt", 0)) > 0 else "short"
+            if current_direction != new_signal:
+                logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, закрываем позицию.")
+                close_all_positions()  # Альтернативно, закрыть только для данного символа
+                time.sleep(0.5)  # Ждем обновления данных
+            else:
+                msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
+                logging.info(msg)
+                send_telegram_message(msg)
+                return {"status": "skipped", "message": "Position already open."}
+    try:
+        leverage_resp = binance_client.futures_change_leverage(symbol=symbol, leverage=leverage)
+        logging.info(f"✅ Установлено плечо {leverage} для {symbol}: {leverage_resp}")
+    except Exception as e:
+        err_msg = f"❌ Ошибка установки плеча для {symbol}: {e}"
+        logging.error(err_msg)
+        return {"status": "error", "message": err_msg}
+    side = "BUY" if new_signal == "long" else "SELL"
+    try:
+        order = binance_client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type="MARKET",
+            quantity=quantity
+        )
+        logging.info(f"✅ Ордер создан: {order}")
+    except Exception as e:
+        err_msg = f"❌ Ошибка создания ордера для {symbol}: {e}"
+        logging.error(err_msg)
+        return {"status": "error", "message": err_msg}
+    return {"status": "ok", "message": f"Opened {new_signal.upper()} position on {symbol}."}
+
+# --------------------------
 # Обработка закрытия позиции через Binance User Data Stream
 def handle_user_data(msg):
     if msg.get('e') != 'ORDER_TRADE_UPDATE':
@@ -203,7 +247,7 @@ def handle_user_data(msg):
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
 
 # --------------------------
-# Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
+# Функция автоочистки ордеров (раз в 30 сек)
 def auto_cancel_worker():
     while True:
         time.sleep(30)
@@ -294,7 +338,6 @@ def poll_telegram_commands():
                         else:
                             for sym, info in positions_entry_data.items():
                                 active_signal = info.get("signal", "N/A")
-                                tp_sl_message = ""
                                 if info.get("tp_perc", 0) != 0 and info.get("sl_perc", 0) != 0:
                                     if active_signal.lower() == "long":
                                         tp_level = info["break_even_price"] * (1 + info["tp_perc"]/100)
@@ -303,6 +346,8 @@ def poll_telegram_commands():
                                         tp_level = info["break_even_price"] * (1 - info["tp_perc"]/100)
                                         sl_level = info["break_even_price"] * (1 + info["sl_perc"]/100)
                                     tp_sl_message = f"\nTP: {round(tp_level,2)} ({info['tp_perc']}%)\nSL: {round(sl_level,2)} ({info['sl_perc']}%)"
+                                else:
+                                    tp_sl_message = ""
                                 active_message = (
                                     f"🚀 Активная сделка:\n"
                                     f"Символ: {sym}\n"
@@ -340,7 +385,6 @@ def webhook():
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
 
-    # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
     leverage = int(data.get("leverage", 20))
     quantity = float(data.get("quantity", 0.02))
 
@@ -354,12 +398,9 @@ def webhook():
         send_telegram_message(f"⚠️ Позиция уже открыта по {symbol_fixed}. Сигнал {signal.upper()} игнорируется.")
         return {"status": "skipped", "message": "Position already open."}
 
-    try:
-        leverage_resp = binance_client.futures_change_leverage(symbol=symbol_fixed, leverage=leverage)
-        logging.info(f"✅ Установлено плечо {leverage} для {symbol_fixed}: {leverage_resp}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка установки плеча для {symbol_fixed}: {e}")
-        return {"status": "error", "message": f"Error setting leverage: {e}"}
+    result = switch_position(signal, symbol_fixed, leverage, quantity)
+    if result["status"] != "ok":
+        return result
 
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
@@ -373,7 +414,7 @@ def webhook():
                 min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
-            min_notional = 20.0  # если фильтр не найден, используем 20 USDT по умолчанию
+            min_notional = 20.0
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
         min_qty_required = min_notional / last_price
         min_qty_required = round(min_qty_required, quantity_precision)
@@ -382,8 +423,6 @@ def webhook():
             quantity = min_qty_required
 
     side = "BUY" if signal == "long" else "SELL"
-
-    # Округляем quantity до заданного количества знаков (например, 3 для ETHUSDT)
     quantity = round(quantity, 3)
 
     try:
@@ -423,7 +462,6 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
-    # Получаем TP/SL процентные значения
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
     tp_sl_message = ""
