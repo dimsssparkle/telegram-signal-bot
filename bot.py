@@ -294,6 +294,7 @@ def poll_telegram_commands():
                         else:
                             for sym, info in positions_entry_data.items():
                                 active_signal = info.get("signal", "N/A")
+                                tp_sl_message = ""
                                 if info.get("tp_perc", 0) != 0 and info.get("sl_perc", 0) != 0:
                                     if active_signal.lower() == "long":
                                         tp_level = info["break_even_price"] * (1 + info["tp_perc"]/100)
@@ -302,8 +303,6 @@ def poll_telegram_commands():
                                         tp_level = info["break_even_price"] * (1 - info["tp_perc"]/100)
                                         sl_level = info["break_even_price"] * (1 + info["sl_perc"]/100)
                                     tp_sl_message = f"\nTP: {round(tp_level,2)} ({info['tp_perc']}%)\nSL: {round(sl_level,2)} ({info['sl_perc']}%)"
-                                else:
-                                    tp_sl_message = ""
                                 active_message = (
                                     f"🚀 Активная сделка:\n"
                                     f"Символ: {sym}\n"
@@ -478,7 +477,6 @@ def webhook():
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
     logging.info(open_message)
 
-    # Сохраняем информацию об открытой позиции, включая сигнал и дополнительные параметры
     positions_entry_data[symbol_fixed] = {
         "signal": signal,
         "entry_price": entry_price,
