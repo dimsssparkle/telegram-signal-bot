@@ -36,7 +36,8 @@ except Exception as e:
     logging.error(f"❌ Ошибка подключения к Binance: {e}")
 
 # Глобальный словарь для хранения данных открытых позиций по символам.
-# Для каждого символа сохраняются данные: entry_price, quantity, leverage, commission_entry, break_even_price, tp_perc, sl_perc
+# Для каждого символа сохраняются данные: signal, entry_price, quantity, leverage, used_margin,
+# commission_entry, break_even_price, liq_price, tp_perc, sl_perc
 positions_entry_data = {}
 
 # Глобальная переменная для listen_key
@@ -122,8 +123,7 @@ def handle_user_data(msg):
         return
 
     if order.get('X') == 'FILLED' and order.get('ps', '') == 'BOTH':
-        # Даем немного времени, чтобы история трейдов обновилась
-        time.sleep(2)
+        time.sleep(2)  # время для обновления истории трейдов
         exit_price = float(order.get('avgPrice', order.get('ap', 0)))
         quantity = float(order.get('q', 0))
         pnl = float(order.get('rp', 0))
@@ -140,7 +140,6 @@ def handle_user_data(msg):
         except Exception as e:
             logging.error(f"❌ Ошибка получения трейдов для закрывающей сделки: {e}")
         
-        # Извлекаем данные об открытии сделки
         entry_data = positions_entry_data.pop(symbol, {})
         entry_price = entry_data.get("entry_price", 0)
         leverage = entry_data.get("leverage", 1)
@@ -148,6 +147,7 @@ def handle_user_data(msg):
         break_even_price = entry_data.get("break_even_price", 0)
         tp_perc = entry_data.get("tp_perc", 0)
         sl_perc = entry_data.get("sl_perc", 0)
+        signal = entry_data.get("signal", "N/A")
         
         total_commission = commission_entry + commission_exit
         net_pnl = pnl - total_commission
@@ -248,7 +248,7 @@ def start_userdata_stream():
     threading.Thread(target=keep_alive, daemon=True).start()
 
 # --------------------------
-# Функция опроса Telegram для управления ботом (команды /pause, /resume, /close_orders, /close_orders_pause_trading, /balance)
+# Функция опроса Telegram для управления ботом (команды /pause, /resume, /close_orders, /close_orders_pause_trading, /balance, /active_trade)
 def poll_telegram_commands():
     global trading_enabled
     offset = None
@@ -288,6 +288,36 @@ def poll_telegram_commands():
                             send_telegram_message(f"💰 Текущий Futures баланс: USDT {balance}")
                         else:
                             send_telegram_message("❌ Не удалось получить баланс.")
+                    elif text == "/active_trade":
+                        if len(positions_entry_data) == 0:
+                            send_telegram_message("ℹ️ Нет открытых позиций.")
+                        else:
+                            for sym, info in positions_entry_data.items():
+                                active_signal = info.get("signal", "N/A")
+                                if info.get("tp_perc", 0) != 0 and info.get("sl_perc", 0) != 0:
+                                    if active_signal.lower() == "long":
+                                        tp_level = info["break_even_price"] * (1 + info["tp_perc"]/100)
+                                        sl_level = info["break_even_price"] * (1 - info["sl_perc"]/100)
+                                    else:
+                                        tp_level = info["break_even_price"] * (1 - info["tp_perc"]/100)
+                                        sl_level = info["break_even_price"] * (1 + info["sl_perc"]/100)
+                                    tp_sl_message = f"\nTP: {round(tp_level,2)} ({info['tp_perc']}%)\nSL: {round(sl_level,2)} ({info['sl_perc']}%)"
+                                else:
+                                    tp_sl_message = ""
+                                active_message = (
+                                    f"🚀 Активная сделка:\n"
+                                    f"Символ: {sym}\n"
+                                    f"Направление: {active_signal.upper()}\n"
+                                    f"Количество: {info.get('quantity', 'N/A')}\n"
+                                    f"Цена входа: {info.get('entry_price', 'N/A')}\n"
+                                    f"Плечо: {info.get('leverage', 'N/A')}\n"
+                                    f"Использованная маржа: {info.get('used_margin', 'N/A')}\n"
+                                    f"Цена ликвидации: {info.get('liq_price', 'N/A')}\n"
+                                    f"Комиссия входа: {info.get('commission_entry', 'N/A')}\n"
+                                    f"Цена безубыточности: {info.get('break_even_price', 'N/A')}"
+                                    f"{tp_sl_message}"
+                                )
+                                send_telegram_message(active_message)
         except Exception as e:
             logging.error(f"❌ Ошибка при опросе Telegram: {e}")
         time.sleep(2)
@@ -448,12 +478,16 @@ def webhook():
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
     logging.info(open_message)
 
+    # Сохраняем информацию об открытой позиции, включая сигнал и дополнительные параметры
     positions_entry_data[symbol_fixed] = {
+        "signal": signal,
         "entry_price": entry_price,
         "quantity": quantity,
         "leverage": leverage,
         "commission_entry": commission_entry,
         "break_even_price": break_even_price,
+        "used_margin": used_margin,
+        "liq_price": liq_price,
         "tp_perc": tp_perc,
         "sl_perc": sl_perc
     }
