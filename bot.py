@@ -247,7 +247,7 @@ def handle_user_data(msg):
             logging.error(f"❌ Ошибка отмены висячих ордеров для {symbol}: {e}")
 
 # --------------------------
-# Функция автоочистки ордеров (раз в 30 сек)
+# Функция, которая раз в 30 секунд проверяет открытые позиции и отменяет ордера, если позиции отсутствуют
 def auto_cancel_worker():
     while True:
         time.sleep(30)
@@ -386,7 +386,6 @@ def webhook():
         logging.error("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
 
-    # Дальнейшая логика обработки сигнала...
     signal = data["signal"].lower()
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
@@ -408,6 +407,8 @@ def webhook():
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
+            # После успешного переключения завершаем выполнение вебхука
+            return result
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
@@ -418,6 +419,9 @@ def webhook():
         result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
+        # После успешного открытия позиции завершаем выполнение вебхука, чтобы не создавать ордер повторно
+        return result
+
 
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
@@ -440,6 +444,8 @@ def webhook():
             quantity = min_qty_required
 
     side = "BUY" if signal == "long" else "SELL"
+
+    # Округляем quantity до заданного количества знаков (например, 3 для ETHUSDT)
     quantity = round(quantity, 3)
 
     try:
@@ -479,6 +485,7 @@ def webhook():
     except Exception as e:
         logging.error(f"❌ Ошибка получения комиссии: {e}")
 
+    # Получаем TP/SL процентные значения
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
     tp_sl_message = ""
