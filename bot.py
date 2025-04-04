@@ -375,12 +375,18 @@ def webhook():
         logging.info("⚠️ Торговля отключена. Сигналы игнорируются.")
         return {"status": "skipped", "message": "Trading is disabled."}, 200
 
-    data = request.get_json()
+    try:
+        data = request.get_json(force=True)
+    except Exception as e:
+        logging.error(f"❌ Ошибка парсинга JSON: {e}")
+        return {"status": "error", "message": "JSON parse error"}, 400
+
     logging.debug(f"DEBUG: Получен JSON: {data}")
     if not data or "signal" not in data:
         logging.error("❌ Нет поля 'signal' в полученных данных")
         return {"status": "error", "message": "No signal provided"}, 400
 
+    # Дальнейшая логика обработки сигнала...
     signal = data["signal"].lower()
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
