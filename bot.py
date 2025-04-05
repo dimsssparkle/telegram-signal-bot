@@ -117,8 +117,9 @@ def close_all_positions():
 def switch_position(new_signal, symbol, leverage, quantity):
     """
     Если открыта позиция с направлением, отличным от new_signal,
-    закрываем текущую позицию (включая TP/SL ордера) и открываем новую.
-    Если позиция с тем же направлением уже открыта – сигнал игнорируется.
+    закрываем текущую позицию (и связанные с ней ордера TP/SL), ждем обновления,
+    и затем открываем новую позицию.
+    Если позиция с тем же направлением уже открыта, сигнал игнорируется.
     """
     current_position = get_position(symbol)
     if current_position:
@@ -128,7 +129,7 @@ def switch_position(new_signal, symbol, leverage, quantity):
             if current_direction != new_signal:
                 logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
                 close_all_positions()  # Закрываем все позиции по данному символу
-                time.sleep(0.5)  # Ждем обновления данных
+                time.sleep(2)  # Увеличена задержка для обновления данных после закрытия
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
                 logging.info(msg)
@@ -407,7 +408,7 @@ def webhook():
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            # После переключения завершаем выполнение вебхука
+            # После переключения завершаем выполнение вебхука (новая позиция уже открыта)
             return result
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
@@ -433,7 +434,7 @@ def webhook():
                 min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
-            min_notional = 20.0  # по умолчанию
+            min_notional = 20.0  # если фильтр не найден, используем 20 USDT по умолчанию
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
         min_qty_required = round(min_notional / last_price, quantity_precision)
         if quantity < min_qty_required:
@@ -533,7 +534,6 @@ def webhook():
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
     logging.info(open_message)
 
-    # Сохраняем данные открытой позиции
     positions_entry_data[symbol_fixed] = {
         "signal": signal,
         "entry_price": entry_price,
