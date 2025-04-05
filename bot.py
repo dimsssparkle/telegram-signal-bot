@@ -116,9 +116,8 @@ def close_all_positions():
 # Функция переключения позиции (switch_position)
 def switch_position(new_signal, symbol, leverage, quantity):
     """
-    Если открыта позиция с направлением, отличным от new_signal,
-    закрываем текущую позицию (и связанные с ней ордера TP/SL), ждем обновления,
-    и затем открываем новую позицию.
+    Если уже открыта позиция с направлением, отличным от new_signal,
+    закрываем текущую позицию и открываем новую.
     Если позиция с тем же направлением уже открыта, сигнал игнорируется.
     """
     current_position = get_position(symbol)
@@ -129,7 +128,7 @@ def switch_position(new_signal, symbol, leverage, quantity):
             if current_direction != new_signal:
                 logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
                 close_all_positions()  # Закрываем все позиции по данному символу
-                time.sleep(2)  # Увеличена задержка для обновления данных после закрытия
+                time.sleep(3)  # Увеличенная задержка для обновления данных после закрытия позиций
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
                 logging.info(msg)
@@ -391,7 +390,7 @@ def webhook():
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
 
-    # Динамические параметры: leverage и quantity
+    # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
     leverage = int(data.get("leverage", 20))
     quantity = float(data.get("quantity", 0.02))
 
@@ -408,8 +407,7 @@ def webhook():
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            # После переключения завершаем выполнение вебхука (новая позиция уже открыта)
-            return result
+            return result  # Завершаем выполнение вебхука после переключения позиции
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
@@ -420,8 +418,9 @@ def webhook():
         result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
-        # После успешного открытия позиции продолжаем обработку для выставления TP/SL
+        return result
 
+    # (Ниже код не выполнится, так как return уже сработал)
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
 
@@ -436,7 +435,8 @@ def webhook():
         if min_notional is None:
             min_notional = 20.0  # если фильтр не найден, используем 20 USDT по умолчанию
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
-        min_qty_required = round(min_notional / last_price, quantity_precision)
+        min_qty_required = min_notional / last_price
+        min_qty_required = round(min_qty_required, quantity_precision)
         if quantity < min_qty_required:
             logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
             quantity = min_qty_required
@@ -456,7 +456,8 @@ def webhook():
         logging.error(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error creating order: {e}"}
 
-    time.sleep(0.5)
+    time.sleep(1)  # Увеличенная задержка для обновления данных после открытия ордера
+
     pos = get_position(symbol_fixed)
     if not pos:
         logging.error("❌ Не удалось получить информацию о позиции после ордера")
