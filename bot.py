@@ -116,11 +116,9 @@ def close_all_positions():
 # Функция переключения позиции (switch_position)
 def switch_position(new_signal, symbol, leverage, quantity):
     """
-    Если открыта позиция с направлением, отличным от new_signal:
-      - Закрываем все открытые позиции для symbol (включая TP/SL ордера)
-      - Ждем обновления данных (0.5 сек)
-      - Открываем новую позицию с новым сигналом (new_signal)
-    Если позиция уже открыта с тем же направлением – сигнал игнорируется.
+    Если открыта позиция с направлением, отличным от new_signal,
+    закрываем текущую позицию (включая TP/SL ордера) и открываем новую.
+    Если позиция с тем же направлением уже открыта – сигнал игнорируется.
     """
     current_position = get_position(symbol)
     if current_position:
@@ -129,14 +127,13 @@ def switch_position(new_signal, symbol, leverage, quantity):
             current_direction = "long" if float(current_position.get("positionAmt", 0)) > 0 else "short"
             if current_direction != new_signal:
                 logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
-                close_all_positions()  # Закрываем все позиции для symbol
+                close_all_positions()  # Закрываем все позиции по данному символу
                 time.sleep(0.5)  # Ждем обновления данных
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
                 logging.info(msg)
                 send_telegram_message(msg)
                 return {"status": "skipped", "message": "Position already open."}
-    # Открытие новой позиции
     try:
         leverage_resp = binance_client.futures_change_leverage(symbol=symbol, leverage=leverage)
         logging.info(f"✅ Установлено плечо {leverage} для {symbol}: {leverage_resp}")
@@ -393,7 +390,7 @@ def webhook():
     symbol_received = data.get("symbol", "N/A")
     symbol_fixed = symbol_received.split('.')[0]
 
-    # Динамические параметры: leverage и quantity (если не переданы, используются значения по умолчанию)
+    # Динамические параметры: leverage и quantity
     leverage = int(data.get("leverage", 20))
     quantity = float(data.get("quantity", 0.02))
 
@@ -406,22 +403,24 @@ def webhook():
     if current_pos and abs(float(current_pos.get("positionAmt", 0))) > 0:
         current_direction = "long" if float(current_pos.get("positionAmt", 0)) > 0 else "short"
         if current_direction != signal:
+            # Если сигнал противоположный, переключаем позицию
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            return result  # После переключения завершаем обработку
+            # После переключения завершаем выполнение вебхука
+            return result
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
             send_telegram_message(msg)
             return {"status": "skipped", "message": "Position already open."}
     else:
+        # Если позиции нет, открываем новую через switch_position
         result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
-        return result
+        # После успешного открытия позиции продолжаем обработку для выставления TP/SL
 
-    # (Этот код не должен выполняться, так как после switch_position мы уже выходим)
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
 
@@ -434,10 +433,9 @@ def webhook():
                 min_notional = float(f["minNotional"])
                 break
         if min_notional is None:
-            min_notional = 20.0
+            min_notional = 20.0  # по умолчанию
         quantity_precision = int(symbol_info.get("quantityPrecision", 3))
-        min_qty_required = min_notional / last_price
-        min_qty_required = round(min_qty_required, quantity_precision)
+        min_qty_required = round(min_notional / last_price, quantity_precision)
         if quantity < min_qty_required:
             logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
             quantity = min_qty_required
@@ -535,6 +533,7 @@ def webhook():
     logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
     logging.info(open_message)
 
+    # Сохраняем данные открытой позиции
     positions_entry_data[symbol_fixed] = {
         "signal": signal,
         "entry_price": entry_price,
