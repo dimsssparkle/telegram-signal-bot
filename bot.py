@@ -113,12 +113,14 @@ def close_all_positions():
         send_telegram_message("ℹ️ Нет открытых позиций для закрытия.")
 
 # --------------------------
-# Функция переключения позиции (switch_position) с установкой TP/SL
-def switch_position(new_signal, symbol, leverage, quantity, tp_perc, sl_perc):
+# Функция переключения позиции (switch_position)
+def switch_position(new_signal, symbol, leverage, quantity):
     """
-    Если открыта позиция с направлением, отличным от new_signal,
-    закрываем текущую позицию и открываем новую, затем устанавливаем TP/SL.
-    Если позиция с тем же направлением уже открыта, сигнал игнорируется.
+    Если открыта позиция с направлением, отличным от new_signal:
+      - Закрываем все открытые позиции для symbol (включая TP/SL ордера)
+      - Ждем обновления данных (0.5 сек)
+      - Открываем новую позицию с новым сигналом (new_signal)
+    Если позиция уже открыта с тем же направлением – сигнал игнорируется.
     """
     current_position = get_position(symbol)
     if current_position:
@@ -127,13 +129,14 @@ def switch_position(new_signal, symbol, leverage, quantity, tp_perc, sl_perc):
             current_direction = "long" if float(current_position.get("positionAmt", 0)) > 0 else "short"
             if current_direction != new_signal:
                 logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
-                close_all_positions()  # Закрываем все позиции по данному символу
+                close_all_positions()  # Закрываем все позиции для symbol
                 time.sleep(0.5)  # Ждем обновления данных
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
                 logging.info(msg)
                 send_telegram_message(msg)
                 return {"status": "skipped", "message": "Position already open."}
+    # Открытие новой позиции
     try:
         leverage_resp = binance_client.futures_change_leverage(symbol=symbol, leverage=leverage)
         logging.info(f"✅ Установлено плечо {leverage} для {symbol}: {leverage_resp}")
@@ -154,55 +157,7 @@ def switch_position(new_signal, symbol, leverage, quantity, tp_perc, sl_perc):
         err_msg = f"❌ Ошибка создания ордера для {symbol}: {e}"
         logging.error(err_msg)
         return {"status": "error", "message": err_msg}
-    # Ждем обновления данных позиции
-    time.sleep(0.5)
-    pos = get_position(symbol)
-    if not pos:
-        err_msg = "❌ Не удалось получить информацию о позиции после ордера"
-        logging.error(err_msg)
-        return {"status": "error", "message": err_msg}
-    try:
-        entry_price = float(pos.get("entryPrice", 0))
-        used_margin = float(pos.get("initialMargin", 0))
-        liq_price = float(pos.get("liquidationPrice", 0))
-        break_even_price = float(pos.get("breakEvenPrice", 0))
-    except Exception as e:
-        logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
-        entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
-
-    # Если TP/SL заданы, создаём ордера TP и SL
-    if tp_perc != 0 and sl_perc != 0:
-        if new_signal == "long":
-            tp_level = break_even_price * (1 + tp_perc/100)
-            sl_level = break_even_price * (1 - sl_perc/100)
-        else:
-            tp_level = break_even_price * (1 - tp_perc/100)
-            sl_level = break_even_price * (1 + sl_perc/100)
-        try:
-            tp_order = binance_client.futures_create_order(
-                symbol=symbol,
-                side="SELL" if new_signal == "long" else "BUY",
-                type="TAKE_PROFIT_MARKET",
-                stopPrice=round(tp_level, 2),
-                closePosition=True,
-                timeInForce="GTC"
-            )
-            logging.info(f"✅ TP ордер установлен для {symbol}: {tp_order}")
-        except Exception as e:
-            logging.error(f"❌ Ошибка установки TP ордера для {symbol}: {e}")
-        try:
-            sl_order = binance_client.futures_create_order(
-                symbol=symbol,
-                side="SELL" if new_signal == "long" else "BUY",
-                type="STOP_MARKET",
-                stopPrice=round(sl_level, 2),
-                closePosition=True,
-                timeInForce="GTC"
-            )
-            logging.info(f"✅ SL ордер установлен для {symbol}: {sl_order}")
-        except Exception as e:
-            logging.error(f"❌ Ошибка установки SL ордера для {symbol}: {e}")
-    return {"status": "ok", "message": f"Opened {new_signal.upper()} position on {symbol} with TP/SL."}
+    return {"status": "ok", "message": f"Opened {new_signal.upper()} position on {symbol}."}
 
 # --------------------------
 # Обработка закрытия позиции через Binance User Data Stream
@@ -451,22 +406,149 @@ def webhook():
     if current_pos and abs(float(current_pos.get("positionAmt", 0))) > 0:
         current_direction = "long" if float(current_pos.get("positionAmt", 0)) > 0 else "short"
         if current_direction != signal:
-            # Если сигнал противоположный, переключаем позицию через switch_position
-            result = switch_position(signal, symbol_fixed, leverage, quantity, float(data.get("tp_perc", 0)), float(data.get("sl_perc", 0)))
+            result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            return result  # завершаем выполнение вебхука после переключения
+            return result  # После переключения завершаем обработку
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
             send_telegram_message(msg)
             return {"status": "skipped", "message": "Position already open."}
     else:
-        # Если позиции нет, открываем новую через switch_position
-        result = switch_position(signal, symbol_fixed, leverage, quantity, float(data.get("tp_perc", 0)), float(data.get("sl_perc", 0)))
+        result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
         return result
+
+    # (Этот код не должен выполняться, так как после switch_position мы уже выходим)
+    ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
+    last_price = float(ticker["price"])
+
+    exchange_info = binance_client.futures_exchange_info()
+    symbol_info = next((s for s in exchange_info["symbols"] if s["symbol"] == symbol_fixed), None)
+    if symbol_info:
+        min_notional = None
+        for f in symbol_info["filters"]:
+            if f.get("filterType") == "MIN_NOTIONAL" and "minNotional" in f:
+                min_notional = float(f["minNotional"])
+                break
+        if min_notional is None:
+            min_notional = 20.0
+        quantity_precision = int(symbol_info.get("quantityPrecision", 3))
+        min_qty_required = min_notional / last_price
+        min_qty_required = round(min_qty_required, quantity_precision)
+        if quantity < min_qty_required:
+            logging.info(f"Количество {quantity} слишком мало, минимальное требуемое: {min_qty_required:.6f}. Автоматически устанавливаем минимальное количество.")
+            quantity = min_qty_required
+
+    side = "BUY" if signal == "long" else "SELL"
+    quantity = round(quantity, 3)
+
+    try:
+        order = binance_client.futures_create_order(
+            symbol=symbol_fixed,
+            side=side,
+            type="MARKET",
+            quantity=quantity
+        )
+        logging.info(f"✅ Ордер создан: {order}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
+        return {"status": "error", "message": f"Error creating order: {e}"}
+
+    time.sleep(0.5)
+    pos = get_position(symbol_fixed)
+    if not pos:
+        logging.error("❌ Не удалось получить информацию о позиции после ордера")
+        return {"status": "error", "message": "Не удалось получить информацию о позиции"}
+
+    try:
+        entry_price = float(pos.get("entryPrice", 0))
+        used_margin = float(pos.get("initialMargin", 0))
+        liq_price = float(pos.get("liquidationPrice", 0))
+        break_even_price = float(pos.get("breakEvenPrice", 0))
+    except Exception as e:
+        logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
+        entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
+
+    commission_entry = 0.0
+    try:
+        trades = binance_client.futures_account_trades(symbol=symbol_fixed)
+        for trade in reversed(trades):
+            if trade.get("orderId") == order.get("orderId"):
+                commission_entry = float(trade.get("commission", 0))
+                break
+    except Exception as e:
+        logging.error(f"❌ Ошибка получения комиссии: {e}")
+
+    tp_perc = float(data.get("tp_perc", 0))
+    sl_perc = float(data.get("sl_perc", 0))
+    tp_sl_message = ""
+    if tp_perc != 0 and sl_perc != 0:
+        if signal == "long":
+            tp_level = break_even_price * (1 + tp_perc/100)
+            sl_level = break_even_price * (1 - sl_perc/100)
+        else:
+            tp_level = break_even_price * (1 - tp_perc/100)
+            sl_level = break_even_price * (1 + sl_perc/100)
+        try:
+            tp_order = binance_client.futures_create_order(
+                symbol=symbol_fixed,
+                side="SELL" if signal=="long" else "BUY",
+                type="TAKE_PROFIT_MARKET",
+                stopPrice=round(tp_level, 2),
+                closePosition=True,
+                timeInForce="GTC"
+            )
+            logging.info(f"✅ TP ордер установлен для {symbol_fixed}: {tp_order}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки TP ордера для {symbol_fixed}: {e}")
+        try:
+            sl_order = binance_client.futures_create_order(
+                symbol=symbol_fixed,
+                side="SELL" if signal=="long" else "BUY",
+                type="STOP_MARKET",
+                stopPrice=round(sl_level, 2),
+                closePosition=True,
+                timeInForce="GTC"
+            )
+            logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка установки SL ордера для {symbol_fixed}: {e}")
+        tp_sl_message = f"\nTP: {round(tp_level,2)} ({tp_perc}%)\nSL: {round(sl_level,2)} ({sl_perc}%)"
+
+    open_message = (
+        f"🚀 Сделка открыта!\n"
+        f"Символ: {symbol_fixed}\n"
+        f"Направление: {signal.upper()}\n"
+        f"Количество: {quantity}\n"
+        f"Цена входа: {entry_price}\n"
+        f"Плечо: {leverage}\n"
+        f"Использованная маржа: {used_margin}\n"
+        f"Цена ликвидации: {liq_price}\n"
+        f"Комиссия входа: {commission_entry}\n"
+        f"Цена безубыточности: {break_even_price}"
+        f"{tp_sl_message}"
+    )
+    send_telegram_message(open_message)
+    logging.info("DEBUG: Telegram сообщение об открытии отправлено:")
+    logging.info(open_message)
+
+    positions_entry_data[symbol_fixed] = {
+        "signal": signal,
+        "entry_price": entry_price,
+        "quantity": quantity,
+        "leverage": leverage,
+        "commission_entry": commission_entry,
+        "break_even_price": break_even_price,
+        "used_margin": used_margin,
+        "liq_price": liq_price,
+        "tp_perc": tp_perc,
+        "sl_perc": sl_perc
+    }
+
+    return {"status": "ok", "signal": signal, "symbol": symbol_fixed}
 
 if __name__ == "__main__":
     threading.Thread(target=poll_telegram_commands, daemon=True).start()
