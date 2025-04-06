@@ -502,38 +502,59 @@ def webhook():
     tp_perc = float(data.get("tp_perc", 0))
     sl_perc = float(data.get("sl_perc", 0))
     tp_sl_message = ""
-    if tp_perc != 0 and sl_perc != 0:
+    # Изменили условие: теперь, если хотя бы один из параметров не равен 0, выполняем расчет
+    if tp_perc != 0 or sl_perc != 0:
         if signal == "long":
-            tp_level = break_even_price * (1 + tp_perc/100)
-            sl_level = break_even_price * (1 - sl_perc/100)
+            tp_level = break_even_price * (1 + tp_perc/100) if tp_perc != 0 else None
+            sl_level = break_even_price * (1 - sl_perc/100) if sl_perc != 0 else None
         else:
-            tp_level = break_even_price * (1 - tp_perc/100)
-            sl_level = break_even_price * (1 + sl_perc/100)
+            tp_level = break_even_price * (1 - tp_perc/100) if tp_perc != 0 else None
+            sl_level = break_even_price * (1 + sl_perc/100) if sl_perc != 0 else None
+        
+        # Создаем ордер TP, если tp_level определен
         try:
-            tp_order = binance_client.futures_create_order(
-                symbol=symbol_fixed,
-                side="SELL" if signal=="long" else "BUY",
-                type="TAKE_PROFIT_MARKET",
-                stopPrice=round(tp_level, 2),
-                closePosition=True,
-                timeInForce="GTC"
-            )
-            logging.info(f"✅ TP ордер установлен для {symbol_fixed}: {tp_order}")
+            if tp_level is not None:
+                tp_order = binance_client.futures_create_order(
+                    symbol=symbol_fixed,
+                    side="SELL" if signal=="long" else "BUY",
+                    type="TAKE_PROFIT_MARKET",
+                    stopPrice=round(tp_level, 2),
+                    closePosition=True,
+                    timeInForce="GTC"
+                )
+                logging.info(f"✅ TP ордер установлен для {symbol_fixed}: {tp_order}")
+            else:
+                logging.info("TP не указан, ордер не создается.")
         except Exception as e:
             logging.error(f"❌ Ошибка установки TP ордера для {symbol_fixed}: {e}")
+        
+        # Создаем ордер SL, если sl_level определен
         try:
-            sl_order = binance_client.futures_create_order(
-                symbol=symbol_fixed,
-                side="SELL" if signal=="long" else "BUY",
-                type="STOP_MARKET",
-                stopPrice=round(sl_level, 2),
-                closePosition=True,
-                timeInForce="GTC"
-            )
-            logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
+            if sl_level is not None:
+                sl_order = binance_client.futures_create_order(
+                    symbol=symbol_fixed,
+                    side="SELL" if signal=="long" else "BUY",
+                    type="STOP_MARKET",
+                    stopPrice=round(sl_level, 2),
+                    closePosition=True,
+                    timeInForce="GTC"
+                )
+                logging.info(f"✅ SL ордер установлен для {symbol_fixed}: {sl_order}")
+            else:
+                logging.info("SL не указан, ордер не создается.")
         except Exception as e:
             logging.error(f"❌ Ошибка установки SL ордера для {symbol_fixed}: {e}")
-        tp_sl_message = f"\nTP: {round(tp_level,2)} ({tp_perc}%)\nSL: {round(sl_level,2)} ({sl_perc}%)"
+        
+        # Формирование строки уведомления
+        if tp_level is not None:
+            tp_msg = f"TP: {round(tp_level,2)} ({tp_perc}%)"
+        else:
+            tp_msg = ""
+        if sl_level is not None:
+            sl_msg = f"SL: {round(sl_level,2)} ({sl_perc}%)"
+        else:
+            sl_msg = ""
+        tp_sl_message = f"\n{tp_msg}\n{sl_msg}"
 
     open_message = (
         f"🚀 Сделка открыта!\n"
