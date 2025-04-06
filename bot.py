@@ -422,8 +422,8 @@ def webhook():
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            # После переключения позиция уже открыта – завершаем выполнение вебхука
-            return result
+            # НЕ возвращаем результат сразу – продолжаем выполнение для установки TP/SL
+            logging.info(f"Позиция переключена. Продолжаем установку TP/SL для нового сигнала {signal.upper()}.")
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
@@ -434,8 +434,9 @@ def webhook():
         result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
-        # После открытия новой позиции продолжаем установку TP/SL
+        # Продолжаем выполнение для установки TP/SL
 
+    # Дальнейшая логика установки TP/SL и отправки сообщения об открытии позиции
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
 
