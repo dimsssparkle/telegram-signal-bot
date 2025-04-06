@@ -117,7 +117,7 @@ def close_all_positions():
 def switch_position(new_signal, symbol, leverage, quantity):
     """
     Если уже открыта позиция с направлением, отличным от new_signal,
-    закрываем текущую позицию и открываем новую.
+    закрываем текущую позицию и открываем новую с задержками для корректной установки TP/SL.
     Если позиция с тем же направлением уже открыта, сигнал игнорируется.
     """
     current_position = get_position(symbol)
@@ -127,8 +127,21 @@ def switch_position(new_signal, symbol, leverage, quantity):
             current_direction = "long" if float(current_position.get("positionAmt", 0)) > 0 else "short"
             if current_direction != new_signal:
                 logging.info(f"Текущая позиция {current_direction.upper()} отличается от сигнала {new_signal.upper()}, переключаем позицию.")
-                close_all_positions()  # Закрываем все позиции по данному символу
-                time.sleep(3)  # Увеличенная задержка для обновления данных после закрытия позиций
+                # Закрываем текущую позицию (в режиме переключения не вызываем общий close_all_positions, чтобы не сработали TP/SL ордера)
+                try:
+                    order = binance_client.futures_create_order(
+                        symbol=symbol,
+                        side="SELL" if current_direction=="long" else "BUY",
+                        type="MARKET",
+                        quantity=current_amt,
+                        reduceOnly=True
+                    )
+                    logging.info(f"✅ Позиция {symbol} закрыта для переключения: {order}")
+                except Exception as e:
+                    err_msg = f"❌ Ошибка закрытия позиции для переключения {symbol}: {e}"
+                    logging.error(err_msg)
+                    return {"status": "error", "message": err_msg}
+                time.sleep(1)  # Задержка для обновления данных
             else:
                 msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}, сигнал {new_signal.upper()} игнорируется."
                 logging.info(msg)
@@ -154,6 +167,8 @@ def switch_position(new_signal, symbol, leverage, quantity):
         err_msg = f"❌ Ошибка создания ордера для {symbol}: {e}"
         logging.error(err_msg)
         return {"status": "error", "message": err_msg}
+    # Добавляем задержку для корректной установки TP/SL после открытия новой позиции
+    time.sleep(2)
     return {"status": "ok", "message": f"Opened {new_signal.upper()} position on {symbol}."}
 
 # --------------------------
@@ -407,7 +422,8 @@ def webhook():
             result = switch_position(signal, symbol_fixed, leverage, quantity)
             if result["status"] != "ok":
                 return result
-            return result  # Завершаем выполнение вебхука после переключения позиции
+            # После переключения позиция уже открыта – завершаем выполнение вебхука
+            return result
         else:
             msg = f"⚠️ Позиция уже открыта с направлением {current_direction.upper()}. Сигнал {signal.upper()} игнорируется."
             logging.info(msg)
@@ -418,9 +434,8 @@ def webhook():
         result = switch_position(signal, symbol_fixed, leverage, quantity)
         if result["status"] != "ok":
             return result
-        return result
+        # После открытия новой позиции продолжаем установку TP/SL
 
-    # (Ниже код не выполнится, так как return уже сработал)
     ticker = binance_client.futures_symbol_ticker(symbol=symbol_fixed)
     last_price = float(ticker["price"])
 
@@ -442,6 +457,8 @@ def webhook():
             quantity = min_qty_required
 
     side = "BUY" if signal == "long" else "SELL"
+
+    # Округляем quantity до заданного количества знаков (например, 3 для ETHUSDT)
     quantity = round(quantity, 3)
 
     try:
@@ -456,8 +473,7 @@ def webhook():
         logging.error(f"❌ Ошибка создания ордера для {symbol_fixed}: {e}")
         return {"status": "error", "message": f"Error creating order: {e}"}
 
-    time.sleep(1)  # Увеличенная задержка для обновления данных после открытия ордера
-
+    time.sleep(0.5)
     pos = get_position(symbol_fixed)
     if not pos:
         logging.error("❌ Не удалось получить информацию о позиции после ордера")
