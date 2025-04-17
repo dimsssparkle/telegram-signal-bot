@@ -489,6 +489,18 @@ def webhook():
         logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
         entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
 
+        # Добавляем поддерживающую маржу (например, 3x initial margin)
+    try:
+        additional_margin = used_margin * 3
+        resp_margin = binance_client.futures_position_margin(
+            symbol=symbol_fixed,
+            amount=additional_margin,
+            type=1  # 1 = добавить маржу
+        )
+        logging.info(f"✅ Дополнительная маржа {additional_margin} добавлена для {symbol_fixed}: {resp_margin}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка добавления дополнительной маржи: {e}")
+
     commission_entry = 0.0
     try:
         trades = binance_client.futures_account_trades(symbol=symbol_fixed)
