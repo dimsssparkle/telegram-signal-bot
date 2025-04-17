@@ -492,10 +492,15 @@ def webhook():
         # Добавляем поддерживающую маржу (например, 3x initial margin)
     try:
         additional_margin = used_margin * 3
-        resp_margin = binance_client.futures_position_margin_change(
-            symbol=symbol_fixed,
-            amount=additional_margin,
-            type=1
+        resp_margin = binance_client._request_futures_api(
+            method='POST',
+            path='/fapi/v1/positionMargin',
+            signed=True,
+            data={
+                'symbol': symbol_fixed,
+                'amount': additional_margin,
+                'type': 1  # 1 = добавление, 2 = снятие
+            }
         )
         logging.info(f"✅ Дополнительная маржа {additional_margin} добавлена для {symbol_fixed}: {resp_margin}")
     except Exception as e:
