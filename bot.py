@@ -489,20 +489,27 @@ def webhook():
         logging.error(f"❌ Ошибка извлечения данных позиции: {e}")
         entry_price, used_margin, liq_price, break_even_price = 0, 0, 0, 0
 
-        # Добавляем поддерживающую маржу (например, 3x initial margin)
+    # Добавляем поддерживающую маржу (3x initial margin)
     try:
         additional_margin = used_margin * 3
-        resp_margin = binance_client._request_futures_api(
-            method='POST',
-            path='/fapi/v1/positionMargin',
-            signed=True,
-            data={
-                'symbol': symbol_fixed,
-                'amount': additional_margin,
-                'type': 1  # 1 = добавление, 2 = снятие
-            }
-        )
-        logging.info(f"✅ Дополнительная маржа {additional_margin} добавлена для {symbol_fixed}: {resp_margin}")
+        endpoint = "https://fapi.binance.com/fapi/v1/positionMargin"
+        timestamp = int(time.time() * 1000)
+        params = {
+            "symbol": symbol_fixed,
+            "amount": additional_margin,
+            "type": 1,
+            "timestamp": timestamp
+        }
+        import hmac, hashlib, urllib.parse
+        query_string = urllib.parse.urlencode(params)
+        signature = hmac.new(BINANCE_API_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+        params["signature"] = signature
+        headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
+        response = requests.post(endpoint, headers=headers, params=params)
+        if response.status_code == 200:
+            logging.info(f"✅ Дополнительная маржа {additional_margin} добавлена для {symbol_fixed}: {response.json()}")
+        else:
+            logging.error(f"❌ Ошибка добавления маржи: {response.status_code} - {response.text}")
     except Exception as e:
         logging.error(f"❌ Ошибка добавления дополнительной маржи: {e}")
 
