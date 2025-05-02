@@ -491,7 +491,7 @@ def webhook():
 
     # Добавляем поддерживающую маржу (3x initial margin)
     try:
-        additional_margin = used_margin * 3
+        additional_margin = used_margin * 1
         endpoint = "https://fapi.binance.com/fapi/v1/positionMargin"
         timestamp = int(time.time() * 1000)
         params = {
